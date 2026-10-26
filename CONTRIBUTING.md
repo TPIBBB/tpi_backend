@@ -8,7 +8,7 @@
 | Agent 決策組 | `agents/` | 選定 LLM 並實作 `LLMAgent.call_llm`、prompt 設計、記憶摘要、降低呼叫成本 |
 | digiRunner 整合組 | `api/`、`gateway/`、`docker-compose.yml` | 部署 digiRunner、把 world-api 註冊為後端、每個 Agent 的身分與存取政策 |
 | 資料庫與分析組 | `storage/`、`analysis/`、`experiments/`、`db/` | `PostgresRecorder`、補齊指標（合作效率、制度存續…）、分析報告與圖表 |
-| 前端組 | 另一個 repo：`multi-agent-civilization-sim-frontend` | 視覺化；需要新 API 時在本 repo 的 `api/server.py` 的 `/world/*` 新增 |
+| 前端組 | 另一個 repo：`TBIBBB/tpi_frontend` | 視覺化；需要新 API 時在本 repo 的 `api/server.py` 的 `/world/*` 新增 |
 
 組別名稱與人員請自行填入。程式中的 `TODO(組別)` 是各組的起點。
 

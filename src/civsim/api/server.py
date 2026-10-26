@@ -5,7 +5,7 @@
 
 /agents/*  給 Agent 呼叫（應只允許經過 digiRunner 的請求）
 /admin/*   給實驗控制器呼叫（推進回合）
-/world/*   給前端視覺化讀取（前端在另一個 repo：multi-agent-civilization-sim-frontend）
+/world/*   給前端視覺化讀取（前端在另一個 repo：TBIBBB/tpi_frontend）
 
 前端允許的來源由環境變數 CIVSIM_CORS_ORIGINS 設定（逗號分隔），預設為 Vite 開發伺服器。
 

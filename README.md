@@ -4,7 +4,7 @@
 所有行動都由模擬引擎驗證與結算，再以可量化的指標比較不同制度。
 
 本 repo 是模擬引擎、Agent、world-api 與分析。視覺化介面在另一個 repo：
-[multi-agent-civilization-sim-frontend](https://github.com/greentea17dog/multi-agent-civilization-sim-frontend)。
+[tpi_frontend](https://github.com/TBIBBB/tpi_frontend)。
 
 ## 快速開始
 
