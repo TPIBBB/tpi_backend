@@ -1,0 +1,15 @@
+# 實驗 D：階層制度下禁止分享資訊
+name: hierarchical_no_sharing
+seed: 42
+ticks: 30
+roles: {farmer: 8, woodcutter: 6, craftsman: 4, merchant: 6}
+initial_inventory: {food: 8, wood: 0, tools: 1, money: 50}
+action_points: 2
+agent_controller: rule_based
+allow_info_sharing: false
+institution:
+  preset: hierarchical
+  elite_fraction: 0.15
+events:
+  food_shock_prob: 0.15
+  food_shock_multiplier: 0.4

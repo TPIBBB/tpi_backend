@@ -1,0 +1,15 @@
+# 實驗 C：資訊與授權集中於少數菁英（其他條件與 baseline 相同）
+name: hierarchical
+seed: 42
+ticks: 30
+roles: {farmer: 8, woodcutter: 6, craftsman: 4, merchant: 6}
+initial_inventory: {food: 8, wood: 0, tools: 1, money: 50}
+action_points: 2
+agent_controller: rule_based
+allow_info_sharing: true
+institution:
+  preset: hierarchical
+  elite_fraction: 0.15
+events:
+  food_shock_prob: 0.15
+  food_shock_multiplier: 0.4

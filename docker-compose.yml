@@ -1,0 +1,23 @@
+# 本機開發用基礎服務
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: civsim
+      POSTGRES_PASSWORD: civsim
+      POSTGRES_DB: civsim
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - pgdata:/var/lib/postgresql/data
+
+  # TODO: 加入 digiRunner。請依團隊使用的 digiRunner 版本，
+  # 參考官方文件設定 image、port 與管理後台，並把 world-api 註冊為後端服務。
+  # digirunner:
+  #   image: <依官方文件>
+  #   ports:
+  #     - "18080:18080"
+
+volumes:
+  pgdata:

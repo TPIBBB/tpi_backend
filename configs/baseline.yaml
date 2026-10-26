@@ -1,0 +1,14 @@
+# 基準實驗：資訊與權限平均分配
+name: baseline_equal
+seed: 42
+ticks: 30
+roles: {farmer: 8, woodcutter: 6, craftsman: 4, merchant: 6}
+initial_inventory: {food: 8, wood: 0, tools: 1, money: 50}
+action_points: 2
+agent_controller: rule_based   # rule_based | llm
+allow_info_sharing: true
+institution:
+  preset: equal
+events:
+  food_shock_prob: 0.15
+  food_shock_multiplier: 0.4
