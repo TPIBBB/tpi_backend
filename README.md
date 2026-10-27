@@ -4,7 +4,7 @@
 所有行動都由模擬引擎驗證與結算，再以可量化的指標比較不同制度。
 
 本 repo 是模擬引擎、Agent、world-api 與分析。視覺化介面在另一個 repo：
-[tpi_frontend](https://github.com/TBIBBB/tpi_frontend)。
+[tpi_frontend](https://github.com/TPIBBB/tpi_frontend)。
 
 ## 快速開始
 
