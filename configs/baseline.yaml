@@ -1,4 +1,6 @@
-# 基準實驗：資訊與權限平均分配
+# 基準實驗：資訊與權限平均分配(平等社會)
+# 每個人都有read:prices 和 read:forecast 權限，都看得到市價和減產預報
+# 沒有人有授權能力
 name: baseline_equal
 seed: 42
 ticks: 30

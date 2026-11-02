@@ -1,4 +1,7 @@
 # 實驗 D：階層制度下禁止分享資訊
+# 菁英掌權，而且禁止私下傳消息
+# 一般人只剩「向菁英申請權限」
+# 跟 hierarchical 比較，看出非正式的資訊流通有沒有降低不平等
 name: hierarchical_no_sharing
 seed: 42
 ticks: 30

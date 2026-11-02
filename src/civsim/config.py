@@ -46,6 +46,7 @@ class SimConfig:
     )
     action_points: int = 2
     agent_controller: str = "rule_based"  # rule_based | llm
+    llm_call_policy: str = "on_event"  # always | on_event（只在有事件時呼叫 LLM）
     allow_info_sharing: bool = True
     institution: InstitutionConfig = field(default_factory=InstitutionConfig)
     events: EventConfig = field(default_factory=EventConfig)
