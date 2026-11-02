@@ -48,3 +48,39 @@ Agent 不能靠宣稱取得權限：模擬內的權限只能透過 `grant_permis
 - 市場是單一做市商，依淨需求調價；尚無 Agent 之間的雙邊交易
 - 世界事件只有「糧食減產」
 - 權限只有 `read:prices`、`read:forecast` 兩種
+
+## 新方向骨架
+
+研究方向改為「AI 政府面對天災時如何決策」。下面的模組目前只有介面與 `TODO(組別)`，還沒有接進引擎，
+所以現有程式的行為不變。本文件前面的內容描述的仍是現有程式。
+
+| 模組 | 組別 | 內容 |
+|---|---|---|
+| `world/disasters.py` | 模擬引擎組 | 天災時間表與觸發 |
+| `world/government.py` | 模擬引擎組 | 政府的狀態、決策與結算 |
+| `world/social_rules.py` | 模擬引擎組 | 社會規則與違規判定 |
+| `agents/government.py` | Agent 決策組 | 政府的決策與反思（`GovernmentController`） |
+| `analysis/goals.py` | 分析組 | 每次天災的目標判定 |
+| `storage/research_records.py` | 資料庫組 | 天災報告、記憶版本、LLM 呼叫的紀錄 |
+| `experiments/disaster_runner.py` | 分析組 | 比較不同實驗條件 |
+| `api/government.py` | digiRunner 整合組、前端組 | 政府與研究資料的 HTTP 路徑 |
+
+### 預計的回合流程
+
+```
+天災觸發        world/disasters.py
+政府決策        agents/government.py 提出 → world/social_rules.py 檢查規則 → world/government.py 驗證與結算
+平民決策        現有流程
+記錄            現有流程
+評估與反思      某次天災的評估期結束時：analysis/goals.py 產生報告
+                → 政府提出新版記憶 → 引擎驗證後保存（storage/research_records.py）
+```
+
+### 接線
+
+把骨架接進引擎時會改到共用介面，請先在群組討論：
+
+- `world/engine.py`：加入上面的流程
+- `models.py`：把政府決策併入 `ActionType`，或維持獨立的 `GovernmentDecision`
+- `config.py`：新增天災、政府、社會規則、判定標準的設定
+- `api/server.py`：掛上 `api/government.py` 的 router；`/world/*` 異動要同步更新前端
