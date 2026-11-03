@@ -78,6 +78,17 @@ def test_craftsman_does_not_work_without_wood():
     assert not any(a.type == ActionType.WORK for a in actions)
 
 
+def test_citizen_buys_what_it_can_afford_when_low_on_money():
+    """錢不夠買足時要買得起多少買多少，否則整筆被拒絕，有錢也會餓死。"""
+    engine = make_engine()
+    agent_id = agent_of_role(engine, "woodcutter")
+    me = engine.world.agents[agent_id]
+    me.inventory.update(food=0, money=engine.world.market.prices["food"] * 2.5)
+    actions = RuleBasedAgent(agent_id, random.Random(0)).decide(engine.observe(agent_id))
+    buys = [a for a in actions if a.type == ActionType.TRADE and a.params["side"] == "buy"]
+    assert buys[0].params["qty"] == 2
+
+
 def test_permission_requests_rotate_targets():
     engine = make_engine(institution=InstitutionConfig(preset="none"))
     agent_id = agent_of_role(engine, "merchant")

@@ -110,6 +110,10 @@ class ParseError(ValueError):
 def _extract_json(text: str) -> Any:
     """容忍常見的格式偏差：```json 區塊、JSON 前後夾雜說明文字。"""
     text = text.strip()
+    try:
+        return json.loads(text)  # 先試整段，內容裡的 ``` 才不會被誤認成外層的程式碼區塊
+    except json.JSONDecodeError:
+        pass
     fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fenced:
         text = fenced.group(1).strip()

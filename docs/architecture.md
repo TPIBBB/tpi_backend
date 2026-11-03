@@ -3,8 +3,21 @@
 研究「AI 政府在多次天災中，能否靠記憶學會穩住價格、避免飢荒」。本文件記錄已經定案的專案邊界；
 還沒定的數值見 README 的「待討論」。
 
-> 目前程式仍是舊方向（資訊權限）的引擎，新方向的模組只有骨架。下面描述的是要實作的目標架構，
-> 「現有程式的調整」一節列出和現有程式不同的地方。
+> 目前程式仍是舊方向（資訊權限）的引擎，新方向的模組都還沒有接進引擎。其中 `agents/government.py` 已有實作，
+> 其他模組只有介面與 `TODO(組別)`。下面描述的是要實作的目標架構，「接線」一節列出和現有程式不同的地方。
+
+## 核心觀念
+
+**政府只能提出決策與新版記憶，世界狀態只由模擬引擎改變。**
+
+引擎對每個決策問兩個問題，分開由兩個模組回答：
+
+| 問題 | 例子 | 模組 |
+|---|---|---|
+| 應不應該做 | 處決平民是否違反社會規則 | `world/social_rules.py` |
+| 做不做得到 | 儲備夠不夠發糧 | `world/government.py` |
+
+社會規則由研究者新增，政府只能讀取、不能修改。
 
 ## 範圍
 
@@ -46,10 +59,13 @@
 
 | 類別 | 行動 |
 |---|---|
-| 穩定 | 釋出儲備、收購儲備、價格上限、補貼、配給 |
-| 財政 | 課稅、發行貨幣 |
-| 強制 | 徵收、處罰平民 |
-| 資訊 | `PUBLISH_FORECAST`：把預報公開給平民（平民會沿用現有的囤積反應） |
+| 穩定 | `release_reserve`、`buy_reserve`、`import_food`、`price_cap`、`distribute_food`、`cash_transfer` |
+| 財政 | `collect_tax`、`issue_currency` |
+| 強制 | `seize_food`、`execute_citizen` |
+| 資訊 | `publish_forecast`：把預報公開給平民（平民會沿用現有的囤積反應） |
+
+名稱與參數以 `agents/government.py` 的 `DECISION_DOCS` 為準，`publish_forecast` 尚未加入；
+實際可用的行動由模擬引擎組的 `GovernmentActionType` 決定。
 
 - 刻意納入可能違反社會邏輯的行動，才觀察得到違規。
 - 每個行動至少定義一條平民的反應規則（例如被徵收後下回合工作量下降），壞決策才有代價。
@@ -130,6 +146,38 @@ world-api (api/server.py + api/government.py) ── 模擬引擎；平民在這
 - 政府 client 的請求在 header 帶 `run_id`，讓 digiRunner 的存取紀錄能和模擬紀錄對應。
 - 先寫 JSONL（`JsonlRecorder`），資料庫組另寫匯入 `db/schema.sql` 的流程；實驗執行不依賴資料庫服務。
 
+## 模組之間的介面
+
+| 介面 | 模組 | 用途 |
+|---|---|---|
+| `build_schedule(seed, ticks)` | `world/disasters.py` | 建立天災時間表，只由 seed 決定 |
+| `begin_tick_events(world, schedule)` | `world/disasters.py` | 回合開始時更新預報、觸發天災 |
+| `GovernmentController.decide(obs)` | `agents/government.py` | 根據 `GovernmentObservation` 提出 `GovernmentDecision` |
+| `GovernmentController.reflect(report, memory)` | `agents/government.py` | 回傳新版記憶，不修改時回傳 `None` |
+| `find_violations(decision, rules)` | `world/social_rules.py` | 回傳決策違反的規則 |
+| `validate(world, decision)` | `world/government.py` | 合法時回傳 `None`，否則回傳拒絕原因 |
+| `settle(world, decision)` | `world/government.py` | 執行已驗證的決策並回傳事件紀錄 |
+| `evaluate_disaster(disaster, history, events)` | `analysis/goals.py` | 產生一次天災的報告 |
+| `first_sustained(reports)` | `analysis/goals.py` | 找出從第幾次天災開始，之後每一次都達標 |
+| `ResearchRecorder` | `storage/research_records.py` | 保存 manifest、天災報告、記憶版本與 LLM 呼叫 |
+| `run_conditions(configs, repeats, out_root)` | `experiments/disaster_runner.py` | 每組條件跑多個 seed，輸出每次天災的達標比例 |
+
+## 預計的 HTTP 路徑
+
+都列在 `api/government.py`，目前尚未實作。政府的路徑預留 `run_id`（見上面的執行模式）。
+
+| 路徑 | 內容 |
+|---|---|
+| `GET /runs/{run_id}/government/observation` | 政府本回合看得到的內容 |
+| `POST /runs/{run_id}/government/decisions` | 提交政府決策 |
+| `GET /runs/{run_id}/government/reflections` | 等待反思的天災報告與目前的記憶 |
+| `POST /runs/{run_id}/government/memory` | 提交新版記憶 |
+| `GET /world/disasters` | 天災時間表與報告 |
+| `GET /world/memory` | 政府記憶的所有版本 |
+| `GET /world/rules` | 社會規則 |
+
+`/runs/*/government/*` 只有政府的身分能呼叫；`/world/*` 的欄位由前端組確認。
+
 ## 模組與組別
 
 | 模組 | 組別 | 內容 |
@@ -143,9 +191,9 @@ world-api (api/server.py + api/government.py) ── 模擬引擎；平民在這
 | `storage/research_records.py` | 資料庫組 | manifest、天災報告、記憶版本、LLM 呼叫的紀錄 |
 | `api/government.py` | digiRunner 整合組、前端組 | 政府與研究資料的 HTTP 路徑 |
 
-## 現有程式的調整
+## 接線
 
-會改到共用介面，請先在群組討論分工與順序：
+把骨架接進引擎、調整現有程式時會改到共用介面，請先在群組討論分工與順序：
 
 - **移除舊的資訊權限**：`policy/`、`models.py` 的權限行動、`world/engine.py` 與 `world/rules.py` 的權限檢查、
   `agents/rule_based.py` 的申請與授權邏輯、`agents/llm.py`、`analysis/metrics.py` 的權限指標、
@@ -153,5 +201,7 @@ world-api (api/server.py + api/government.py) ── 模擬引擎；平民在這
 - **預報**：平民改為預設看不到預報，只有政府發布後才看得到。
 - **市場**：做市商的價格加入貨幣量倍率。
 - **`world/engine.py`**：加入上面的回合流程，並支援 API 模式下等待政府決策。
+- **`world/events.py`**：`generate_events` 由 `begin_tick_events` 取代。
+- **`models.py`**：政府決策維持獨立的 `GovernmentDecision`，不併入 `ActionType`。
 - **`config.py`**：新增天災、政府、社會規則、判定標準、決策頻率、模型的設定。
 - **`api/server.py`**：掛上 `api/government.py` 的 router。

@@ -76,7 +76,12 @@ class RuleBasedAgent:
 
         # 4. 生存：食物快不夠就買
         if me.inventory.get("food", 0) < food_days and me.role != "farmer":
-            act(ActionType.TRADE, "食物不足", side="buy", good="food", qty=food_days)
+            # 錢不夠買足時能買多少算多少，否則整筆交易被拒絕，有錢也會餓死
+            qty = food_days
+            if obs.prices:
+                qty = min(food_days, self._affordable(me.inventory["money"], obs.prices["food"]))
+            if qty > 0:
+                act(ActionType.TRADE, "食物不足", side="buy", good="food", qty=qty)
 
         # 5. 職業行為
         role_logic = {
