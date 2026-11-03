@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 
 from civsim.agents.base import AgentController
+from civsim.agents.government import GovernmentController, LLMGovernment, NoGovernment, make_government
 from civsim.agents.rule_based import RuleBasedAgent
 from civsim.config import SimConfig
 from civsim.models import WorldState
@@ -31,4 +32,7 @@ def build_controllers(world: WorldState, config: SimConfig) -> dict[str, AgentCo
     return controllers
 
 
-__all__ = ["AgentController", "RuleBasedAgent", "build_controllers"]
+__all__ = [
+    "AgentController", "GovernmentController", "LLMGovernment", "NoGovernment",
+    "RuleBasedAgent", "build_controllers", "make_government",
+]
