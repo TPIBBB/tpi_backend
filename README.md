@@ -148,7 +148,7 @@ python -m civsim remote --base-url http://localhost:8000
 接上 digiRunner 後，`--base-url` 改成 Gateway 位址（或設定 `.env` 的 `DIGIRUNNER_BASE_URL`），Agent 的每次呼叫就會經過 Gateway。PostgreSQL 與 digiRunner 用 `docker compose up` 啟動（digiRunner 設定待補）。
 
 # 建議未來展望
-讓digirunner判斷給
+讓digirunner當gay agent token去幹大事的人
 
 ### 給前端使用的 API
 
