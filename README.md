@@ -81,19 +81,6 @@ Agent 端 ─┘
 
 - 決定社會規則要有哪些do and don't
 
-# 設計決定
-
-完整內容見 [docs/architecture.md](docs/architecture.md)。
-
-- **研究目標**：只看市場價格；每次天災結束後都設固定天數的評估期，比較 A、C 組的價格能否在評估期內恢復到市場均衡價格
-- **穩定期**：社會沒有經歷天災時的正常社會；每次評估期結束，不論價格是否恢復，引擎都把社會調回同一個均衡狀態，政府記憶會保留，近期決策與被拒絕的理由會清空（人口、政府預算與儲備是否調回待討論）
-- **成功判定的例外**：政府可以使用 `price_cap`，但價格被上限壓住時不算成功；死亡人數不影響成功判定，只記成輔助指標
-- **政府可以做哪些決策**：封閉清單，包含穩定、財政、強制、發布預報四類，刻意納入可能違規的行動
-- **違規決策的處理**：引擎拒絕，並把拒絕理由回饋給政府
-- **記憶更新的時機**：每次天災評估期結束都可以更新，政府可選擇不更新；記憶不跨 run
-- **實驗的比較方式**：規則集在 run 內固定、有版本號；每個 run 有 manifest 記錄所有版本
-- **範圍**：平民維持 rule-based；移除舊方向的資訊權限機制；實驗中政府經由 digiRunner 呼叫 world-api
-
 # 待討論
 
 - **實驗方式**：
@@ -166,7 +153,7 @@ git status
 git add 檔案路徑
 
 # 4. 提交，訊息寫這次做了什麼
-git commit -m "說明這次的修改"
+git commit -m "說明"
 
 # 5. push 前再取得一次最新版本
 git pull origin main
@@ -193,7 +180,6 @@ git push origin main
 |---|---|
 | `git status` | 查看目前改了哪些檔案 |
 | `git diff` | 查看還沒 add 的修改內容 |
-| `git log --oneline -10` | 查看最近 10 個 commit |
 | `git restore --staged 檔案路徑` | 把檔案從 add 中移除，修改內容還在 |
 | `git restore 檔案路徑` | 放棄這個檔案還沒 add 的修改，**無法復原** |
 
@@ -201,6 +187,59 @@ git push origin main
 
 - **不要用 `git push --force`**：會把別人推上去的 commit 蓋掉。
 - **push 前先跑測試**：執行 `python -m pytest`，推上去後 CI 也會再檢查一次。
+
+# CI（自動測試）
+
+CI 會在 GitHub 上自動安裝專案並跑測試，確認推上去的程式能正常運作，不會只在自己電腦上能跑。設定檔在 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
+
+## 什麼時候會執行
+
+- 推到 `main` 時
+- 開 PR 或更新 PR 時
+- 在 GitHub 的 **Actions** 分頁手動執行時
+
+同一個 branch 短時間內推了好幾次時，只會保留最新一次，舊的會自動取消。
+
+## 執行步驟
+
+| 步驟 | 做什麼 | 什麼時候會失敗 |
+|---|---|---|
+| 1. 下載程式碼 | 取出這次 push 的版本 | 幾乎不會 |
+| 2. 安裝 uv | 準備 Python 環境，並快取依賴，讓之後跑得比較快 | GitHub 服務異常時 |
+| 3. 安裝依賴 | 依 `uv.lock` 安裝套件，Python 版本依 `.python-version`（3.12） | 改了 `pyproject.toml` 的依賴，卻沒更新 `uv.lock` |
+| 4. 跑測試 | 執行 `pytest` | 任何一個測試失敗 |
+
+通常 1～2 分鐘內會跑完，超過 10 分鐘會自動停止並算失敗。
+
+## 怎麼看結果
+
+- **commit 旁的圖示**：黃點代表執行中、綠勾代表通過、紅叉代表失敗。
+- **Actions 分頁**：點最新一筆「CI」，再點失敗的步驟，就能看到完整的錯誤訊息。
+
+## 失敗時怎麼處理
+
+1. 到 Actions 分頁找出是哪一步失敗。
+2. 依失敗的步驟處理：
+   - **安裝依賴失敗**：在自己電腦執行 `uv lock`，把更新後的 `uv.lock` 一起 commit。
+   - **測試失敗**：在自己電腦執行 `python -m pytest`，修到通過再 push。如果是因為重寫模組，舊測試已經不適用，就一起刪掉或改寫對應的測試。
+3. 修好後再 push 一次，CI 會自動重跑。
+
+如果懷疑只是 GitHub 暫時出錯，可以在失敗的那次執行頁面按 **Re-run jobs** 重跑。
+
+想在自己電腦上用和 CI 完全相同的方式檢查，執行：
+
+```bash
+uv sync --locked --all-extras
+uv run --locked pytest
+```
+
+## CI 不會檢查什麼
+
+- **不會呼叫真實的 LLM**：測試不應該依賴 API key，也不應該花費 LLM 費用。
+- **不會連 digiRunner 或 PostgreSQL**：這些要在自己電腦上用 `docker compose up` 測試。
+- **不會跑實驗**：實驗結果要由負責實驗與分析的人另外執行和確認。
+
+CI 失敗時請先修好，不要放著繼續推新的修改，否則之後很難判斷是哪次修改造成的問題。
 
 ## 快速開始
 
@@ -229,16 +268,6 @@ python -m civsim remote --base-url http://localhost:8000
 ```
 
 接上 digiRunner 後，`--base-url` 改成 Gateway 位址（或設定 `.env` 的 `DIGIRUNNER_BASE_URL`），Agent 的每次呼叫就會經過 Gateway。PostgreSQL 與 digiRunner 用 `docker compose up` 啟動（digiRunner 設定待補）。
-
-# 給前端使用的 API
-
-| 路徑 | 內容 |
-|---|---|
-| `GET /world/state` | 目前回合、市場、每個 Agent 的狀態與權限 |
-| `GET /world/metrics` | 每回合指標 |
-| `GET /world/events?since_tick=N` | 第 N 回合之後的事件 |
-
-前端開發伺服器的來源預設允許 `http://localhost:5173`，其他來源用環境變數 `CIVSIM_CORS_ORIGINS` 設定（逗號分隔）。
 
 # 專案結構
 
