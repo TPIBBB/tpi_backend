@@ -143,6 +143,65 @@ Agent 端 ─┘
     - `publish_forecast`：不相信預報？還是照樣囤糧？
    政府能不能知道誰沒有遵守？不遵守有沒有懲罰？
 
+# Git 協作流程
+
+開工前先 pull，做完依序 add → commit → pull → push。push 之前再 pull 一次，有衝突就會出現在自己電腦上，比較好處理。
+
+第一次使用前先設定一次，讓 `git pull` 遇到雙方都有新 commit 時用合併處理：
+
+```bash
+git config --global pull.rebase false
+```
+
+## 每次的流程
+
+```bash
+# 1. 開工前：取得最新版本
+git pull origin main
+
+# 2. 做完後：查看改了哪些檔案
+git status
+
+# 3. 加入要提交的檔案（只加自己改的，避免用 git add . 把不相關的檔案一起送出）
+git add 檔案路徑
+
+# 4. 提交，訊息寫這次做了什麼
+git commit -m "說明這次的修改"
+
+# 5. push 前再取得一次最新版本
+git pull origin main
+
+# 6. 推上 GitHub
+git push origin main
+```
+
+## 發生衝突時
+
+第 5 步出現 `CONFLICT` 時：
+
+1. 執行 `git status`，標示 `both modified` 的就是衝突的檔案。
+2. 打開檔案，找到 `<<<<<<<`、`=======`、`>>>>>>>` 標記，保留正確的內容並刪掉標記。
+3. 執行 `git add 檔案路徑`，標記這個檔案已處理。
+4. 執行 `git commit`，使用預設的合併訊息。若進入 vim 編輯器，輸入 `:wq` 再按 Enter 離開。
+5. 執行 `git push origin main`。
+
+不確定怎麼處理時，執行 `git merge --abort` 回到 pull 之前的狀態，再到群組問。
+
+## 常用指令
+
+| 指令 | 用途 |
+|---|---|
+| `git status` | 查看目前改了哪些檔案 |
+| `git diff` | 查看還沒 add 的修改內容 |
+| `git log --oneline -10` | 查看最近 10 個 commit |
+| `git restore --staged 檔案路徑` | 把檔案從 add 中移除，修改內容還在 |
+| `git restore 檔案路徑` | 放棄這個檔案還沒 add 的修改，**無法復原** |
+
+## 注意事項
+
+- **不要用 `git push --force`**：會把別人推上去的 commit 蓋掉。
+- **push 前先跑測試**：執行 `python -m pytest`，推上去後 CI 也會再檢查一次。
+
 ## 快速開始
 
 需要 Python 3.11+。以下指令目前執行的是尚未加入政府的版本。
