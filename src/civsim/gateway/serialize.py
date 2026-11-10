@@ -1,39 +1,25 @@
-"""模型 <-> JSON，給 HTTP API 與 gateway client 共用。"""
+"""政府的觀察與決策 <-> JSON，給 HTTP API 與 gateway client 共用。"""
 
 from __future__ import annotations
 
 from dataclasses import asdict
 from typing import Any
 
-from civsim.models import (
-    Action, ActionType, AgentState, Observation, PermissionRequest, Persona,
-)
+from civsim.world.government import GovernmentActionType, GovernmentDecision, GovernmentObservation
 
 
-def observation_to_dict(obs: Observation) -> dict[str, Any]:
-    data = asdict(obs)
-    data["permissions"] = sorted(obs.permissions)
-    return data
+def observation_to_dict(obs: GovernmentObservation) -> dict[str, Any]:
+    return asdict(obs)
 
 
-def observation_from_dict(data: dict[str, Any]) -> Observation:
-    s = dict(data["self_state"])
-    s["persona"] = Persona(**s["persona"])
-    return Observation(
-        tick=data["tick"],
-        self_state=AgentState(**s),
-        others=data["others"],
-        prices=data["prices"],
-        forecast=data["forecast"],
-        permissions=set(data["permissions"]),
-        pending_requests=[PermissionRequest(**r) for r in data["pending_requests"]],
-        allow_info_sharing=data["allow_info_sharing"],
-    )
+def observation_from_dict(data: dict[str, Any]) -> GovernmentObservation:
+    return GovernmentObservation(**data)
 
 
-def action_to_dict(action: Action) -> dict[str, Any]:
-    return {"type": action.type.value, "params": action.params, "reason": action.reason}
+def decision_to_dict(decision: GovernmentDecision) -> dict[str, Any]:
+    return {"type": decision.type.value, "params": decision.params, "reason": decision.reason}
 
 
-def action_from_dict(agent_id: str, data: dict[str, Any]) -> Action:
-    return Action(agent_id, ActionType(data["type"]), data.get("params", {}), data.get("reason", ""))
+def decision_from_dict(data: dict[str, Any]) -> GovernmentDecision:
+    return GovernmentDecision(GovernmentActionType(data["type"]), data.get("params") or {},
+                              str(data.get("reason", "")))

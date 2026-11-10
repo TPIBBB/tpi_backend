@@ -96,10 +96,10 @@ Agent 端 ─┘
 
 # 待討論
 
-- **均衡價格怎麼算**（最優先）：由四種平民的供需互動算出，公式未定。由社會規則負責人提出。
+- **均衡價格怎麼算**（最優先）：已有提案並實作，見 [docs/society.md](docs/society.md#均衡價格提案)。
+  每天集合競價決定成交價；均衡區間 = 校準期（同 seed、沒有政府、沒有天災）每日成交價的平均 ± 2 個標準差。待會議確認。
 
-- **政府平時可不可以決策**：會中傾向可以（只是多一條規則，也能看出政府是否會未雨綢繆），但還沒正式定案。
-  若可以，穩定期的狀態會受政府影響，A、C 組的基準可能不同。
+- **政府平時可不可以決策**：已確認可以，政府每天都能決策。為了避免穩定期受政府影響，均衡區間改用和政府無關的校準期計算。
 
 - **飢餓與死亡機制**：
   1、設飢餓值，每天扣，幾天沒吃東西就死亡
@@ -109,6 +109,11 @@ Agent 端 ─┘
 - **政府取得糧食的方式**：強制徵收還是購買？徵收要不要付錢？兩者對均衡價格的影響不同，等實作後再決定。
 
 - **天災強度**：會中提到嚴重程度隨機、頻率固定，需確認是否各組用同一批 seed，讓同一次實驗的天災相同。
+
+- **社會規則實作後新增的問題**（細節見 [docs/society.md](docs/society.md)）：
+  - 農夫賣糧收到的錢沒有地方花，只進不出。要不要加「生活開銷」讓錢流回市場？
+  - 「強制讓自耕自食的平民賣糧」要不要做成政府行動？目前只能用 `seize_food` 徵收。
+  - 平民不服從政府時的行為（`persona.complies`）還沒有實作，由 Agent 組設計。
 
 以下等系統做出來、實際跑過再決定：
 
@@ -242,7 +247,7 @@ CI 失敗時請先修好，不要放著繼續推新的修改，否則之後很�
 
 ## 快速開始
 
-需要 Python 3.11+。以下指令目前執行的是尚未加入政府的版本。
+需要 Python 3.11+。目前預設沒有政府（`government.controller: none`），LLM 政府等 Agent 組串接供應商後即可使用。
 
 ```bash
 pip install -e ".[api,dev]"
@@ -250,41 +255,40 @@ pip install -e ".[api,dev]"
 # 單次模擬（紀錄寫到 runs/）
 python -m civsim run --config configs/baseline.yaml
 
-# 批次實驗：重複 5 個 seed，輸出 summary.csv
+# 批次實驗：重複 5 個 seed，輸出每次天災的結果 summary.csv
 python -m civsim experiment configs/baseline.yaml --repeats 5
 
 # 測試
 python -m pytest
 ```
 
-### 經由 API（digiRunner）執行
+### 經由 API 執行
 
 ```bash
-python -m civsim serve --config configs/baseline.yaml     
+python -m civsim serve --config configs/baseline.yaml
 # 啟動 world-api，文件在 http://localhost:8000/docs
-python -m civsim remote --base-url http://localhost:8000   
-# Agent 端透過 HTTP 呼叫
 ```
 
-接上 digiRunner 後，`--base-url` 改成 Gateway 位址（或設定 `.env` 的 `DIGIRUNNER_BASE_URL`），Agent 的每次呼叫就會經過 Gateway。PostgreSQL 與 digiRunner 用 `docker compose up` 啟動（digiRunner 設定待補）。
+政府經 digiRunner 呼叫的路徑（`api/government.py`）尚未實作；引擎已提供 `begin_tick()` → `government_observation()` → `step(decisions)` 給 API 模式使用。PostgreSQL 與 digiRunner 用 `docker compose up` 啟動（digiRunner 設定待補）。
 
 # 專案結構
 
 ```
 src/civsim/
-  models.py          核心資料結構（AgentState、Action、Observation、WorldState…）
+  models.py          核心資料結構（Citizen、Action、Observation、WorldState…）
   config.py          實驗設定（YAML）
   cli.py             命令列入口
-  world/             模擬引擎：回合流程、行動驗證與結算、市場、世界事件（天災）
-  policy/            模擬世界的權限與制度（舊方向，預定移除）
-  agents/            Agent 決策：rule_based（平民）、llm（政府，待實作）
+  world/             模擬引擎：回合流程、平民行動、集合競價市場、天災、政府行動、社會規則、均衡區間
+  agents/            Agent 決策：rule_based（平民預設行為）、government（AI 政府）、llm（LLM 共用工具）
   api/               world-api（FastAPI），註冊在 digiRunner 後面
-  gateway/           Agent 端經 Gateway 呼叫 world-api 的 client
+  gateway/           經 Gateway 呼叫 world-api 的 client
   storage/           事件紀錄（JSONL；PostgreSQL 待實作）
-  analysis/          指標：價格、挨餓與死亡人數、吉尼係數…
+  analysis/          指標與每次天災的成功判定
   experiments/       重複實驗與摘要
-configs/             實驗條件設定檔（hierarchical、no_sharing 為舊方向的條件）
+configs/             實驗條件設定檔
+rules/               社會規則集（有版本號）
 db/schema.sql        PostgreSQL schema
 docs/architecture.md 架構與專案邊界
+docs/society.md      社會規則：初始狀態、回合流程、市場、均衡價格、天災、政府行動
 tests/
 ```

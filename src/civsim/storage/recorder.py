@@ -16,6 +16,8 @@ from civsim.models import Event, WorldState
 
 class Recorder(Protocol):
     def record_tick(self, world: WorldState, events: list[Event], metrics: dict) -> None: ...
+    def record_disaster(self, report: dict) -> None: ...
+    def record_memory(self, version: int, text: str) -> None: ...
     def close(self) -> None: ...
 
 
@@ -23,12 +25,19 @@ class NullRecorder:
     def record_tick(self, world: WorldState, events: list[Event], metrics: dict) -> None:
         pass
 
+    def record_disaster(self, report: dict) -> None:
+        pass
+
+    def record_memory(self, version: int, text: str) -> None:
+        pass
+
     def close(self) -> None:
         pass
 
 
 class JsonlRecorder:
-    """每回合寫一行：events.jsonl / metrics.jsonl / agents.jsonl。"""
+    """每回合寫一行：events.jsonl / metrics.jsonl / citizens.jsonl；
+    每次天災寫一行 disasters.jsonl；每個記憶版本寫一行 memory.jsonl。"""
 
     def __init__(self, out_dir: str | Path, meta: dict | None = None):
         self.out_dir = Path(out_dir)
@@ -39,7 +48,7 @@ class JsonlRecorder:
             )
         self._files = {
             name: (self.out_dir / f"{name}.jsonl").open("w", encoding="utf-8")
-            for name in ("events", "metrics", "agents")
+            for name in ("events", "metrics", "citizens", "disasters", "memory")
         }
 
     def _write(self, name: str, row: dict) -> None:
@@ -49,11 +58,17 @@ class JsonlRecorder:
         for e in events:
             self._write("events", asdict(e))
         self._write("metrics", metrics)
-        for a in world.agents.values():
-            self._write("agents", {
-                "tick": world.tick, "id": a.id, "role": a.role, "goal": a.goal,
-                "health": a.health, "inventory": a.inventory,
+        for c in world.citizens.values():
+            self._write("citizens", {
+                "tick": world.tick, "id": c.id, "type": c.type.value, "alive": c.alive,
+                "food": round(c.food, 4), "money": round(c.money, 4), "hungry_days": c.hungry_days,
             })
+
+    def record_disaster(self, report: dict) -> None:
+        self._write("disasters", report)
+
+    def record_memory(self, version: int, text: str) -> None:
+        self._write("memory", {"version": version, "text": text})
 
     def close(self) -> None:
         for f in self._files.values():
@@ -69,5 +84,9 @@ class PostgresRecorder:
         raise NotImplementedError("PostgresRecorder 尚未實作")
 
     def record_tick(self, world: WorldState, events: list[Event], metrics: dict) -> None: ...
+
+    def record_disaster(self, report: dict) -> None: ...
+
+    def record_memory(self, version: int, text: str) -> None: ...
 
     def close(self) -> None: ...

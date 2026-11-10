@@ -27,8 +27,8 @@ def make_obs(**overrides) -> GovernmentObservation:
 # ---- prompt ----
 def test_system_prompt_lists_only_actions_the_engine_supports():
     prompt = build_system_prompt()
-    assert "idle" in prompt
-    assert "execute_citizen" not in prompt  # 引擎還沒實作的決策不能讓政府選
+    assert "idle" in prompt and "execute_citizen" in prompt
+    assert "publish_forecast" not in prompt  # 引擎沒有的決策不能讓政府選
 
 
 def test_system_prompt_follows_engine_action_list():
