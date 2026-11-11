@@ -12,12 +12,17 @@ services:
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - pgdata:/var/lib/postgresql/data
 
-  # TODO: 加入 digiRunner。請依團隊使用的 digiRunner 版本，
-  # 參考官方文件設定 image、port 與管理後台，並把 world-api 註冊為後端服務。
-  # digirunner:
-  #   image: <依官方文件>
-  #   ports:
-  #     - "18080:18080"
+  # digiRunner 開源版（https://github.com/TPIsoftwareOSPO/digiRunner-Open-Source）
+  # 管理後台：http://localhost:31080/dgrv4/ac4/login
+  # 關閉請用 docker compose stop，不要用 down（down 會刪掉容器，後台的設定可能跟著消失）
+  # TODO（第 2 週）：把 world-api 註冊為後端服務
+  dgr:
+    image: tpisoftwareopensource/digirunner-open-source
+    ports:
+      # 主機的 31080 對到容器內的 18080
+      - "31080:18080"
+    environment:
+      - TZ=Asia/Taipei
 
 volumes:
   pgdata:
