@@ -42,8 +42,26 @@ def test_system_prompt_follows_engine_action_list():
 
 
 def test_prompt_contains_rules_and_memory():
-    data = json.loads(build_prompt(make_obs()))
-    assert data["rules"] == ["不能亂殺平民"] and data["memory"] == "# 政府記憶"
+    prompt = build_prompt(make_obs())
+    assert "- 不能亂殺平民" in prompt and "# 政府記憶" in prompt
+
+
+def test_prompt_state_is_json_and_hides_missing_fields():
+    prompt = build_prompt(make_obs(phase="disaster", days_since_disaster=2, budget=500.0))
+    state = json.loads(prompt.split("```json\n")[1].split("\n```")[0])
+    assert state["tick"] == 3 and state["budget"] == 500.0 and state["days_since_disaster"] == 2
+    assert "天災期間" in state["phase"]
+    assert "hungry" not in state and "food_reserve" not in state  # 沒有的資訊不給 LLM
+
+
+def test_prompt_says_when_there_are_no_rules_or_memory():
+    prompt = build_prompt(make_obs(rules=[], memory=None))
+    assert "目前沒有社會規則" in prompt and "目前沒有記憶" in prompt
+
+
+def test_system_prompt_states_goal_and_no_forecast():
+    prompt = build_system_prompt()
+    assert "均衡" in prompt and "沒有天災預報" in prompt and '{"actions": []}' in prompt
 
 
 # ---- 解析 ----
@@ -104,7 +122,21 @@ def test_decide_sends_system_prompt_and_observation():
 
     LLMGovernment(ScriptedClient(respond)).decide(make_obs())
     assert seen["system"] == build_system_prompt()
-    assert json.loads(seen["user"])["tick"] == 3
+    assert seen["user"] == build_prompt(make_obs())
+
+
+def test_decide_limits_decisions_per_day():
+    text = json.dumps({"actions": [{"type": "idle"}] * 4})
+    gov = LLMGovernment(ScriptedClient([text]), max_decisions=2)
+    assert len(gov.decide(make_obs())) == 2
+    assert "截掉 2 個" in gov.calls[-1].skipped[0]
+
+
+def test_decide_records_token_usage():
+    client = ScriptedClient([IDLE], last_usage={"total_tokens": 42})
+    gov = LLMGovernment(client)
+    gov.decide(make_obs())
+    assert gov.calls[-1].usage == {"total_tokens": 42}
 
 
 @pytest.mark.parametrize("respond", [["沒有 JSON"], ['{"actions": 3}']])

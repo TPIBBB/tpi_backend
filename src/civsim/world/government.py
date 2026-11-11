@@ -35,17 +35,32 @@ class GovernmentDecision:
     reason: str = ""  # 政府自述理由，只做紀錄，不影響結算
 
 
+PHASES = ("stable", "disaster", "evaluation")  # 穩定期、天災期間、評估期
+
+
 @dataclass
 class GovernmentObservation:
-    """政府在本回合看得到的內容。
+    """政府在本回合看得到的內容（依 11/9 會議）。
 
-    TODO(模擬引擎組)：和 Agent 決策組確認政府需要看到哪些資訊。
+    看得到：當下價格、自己的預算與儲備、死亡人數、挨餓人數。看不到平民的庫存，也沒有天災預報。
+    欄位由引擎填入，Agent 只讀取；新增欄位請通知 Agent 負責人。
     """
 
     tick: int
     prices: dict[str, float]
     memory: str | None
     rules: list[str] = field(default_factory=list)
+    phase: str = "stable"  # PHASES 之一；天災發生後政府才會知道
+    days_since_disaster: int | None = None  # 天災開始後第幾天；穩定期為 None
+    budget: float | None = None
+    food_reserve: float | None = None
+    deaths: int = 0  # 這次天災開始後的死亡人數
+    hungry: int | None = None  # 挨餓人數；沒有飢餓機制時為 None
+    # 近期決策與被拒絕的理由，每次調回均衡狀態時清空。
+    # 格式：{"tick": 回合, "type": 決策類型, "params": {...}, "accepted": bool, "reason": 拒絕理由}
+    recent_decisions: list[dict] = field(default_factory=list)
+    # 要維持的價格區間，例如 {"food": [4.5, 5.5]}；是否告訴政府還沒定案，不告訴時為 None
+    target_price_range: dict[str, list[float]] | None = None
 
 
 def validate(world: WorldState, decision: GovernmentDecision) -> str | None:

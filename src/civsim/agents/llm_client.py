@@ -1,0 +1,212 @@
+"""LLM 供應商與共用工具。負責人：Agent。
+
+所有 LLM 呼叫都經過有 complete(system, user) -> str 的 LLMClient：
+- GeminiClient：正式實驗用，呼叫 Google Gemini API
+- ScriptedClient：不連網的假 LLM，給測試與流程演練用
+
+環境變數（可寫在專案根目錄的 .env，由 cli 讀入）：
+- LLM_PROVIDER：gemini；留空表示不使用 LLM
+- LLM_MODEL：模型 ID，預設 DEFAULT_GEMINI_MODEL；正式實驗前要鎖定
+- LLM_API_KEY（或 GEMINI_API_KEY）：Gemini API key
+- LLM_TEMPERATURE：預設 0，讓結果盡量可重現
+- LLM_SEED：固定的亂數種子（選填），Gemini 會盡量對相同輸入給出相同回應
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Protocol
+
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"  # Gemini 文件標示為 Stable 的 Flash 模型
+RETRY_STATUS_CODES = (408, 429, 500, 502, 503, 504)  # 逾時、額度、伺服器錯誤才重試
+
+
+class ParseError(ValueError):
+    """LLM 回應無法解析成需要的格式。"""
+
+
+class LLMError(RuntimeError):
+    """LLM 有回應，但沒有可用的文字（例如被安全過濾或輸出被截斷）。"""
+
+
+class LLMClient(Protocol):
+    model: str
+
+    def complete(self, system: str, user: str) -> str: ...
+
+
+@dataclass
+class LLMCall:
+    """一次 LLM 呼叫的紀錄，用來重現與分析實驗。"""
+
+    tick: int
+    agent_id: str
+    prompt_version: str
+    model: str
+    used_llm: bool
+    trigger: str  # 為什麼呼叫（或不呼叫）LLM
+    prompt: str | None = None
+    response: str | None = None
+    error: str | None = None
+    skipped: list[str] = field(default_factory=list)
+    used_fallback: bool = False
+    usage: dict[str, int] | None = None  # token 用量，用來估算費用
+
+
+# ---- 解析 ----
+def extract_json(text: str) -> Any:
+    """容忍常見的格式偏差：```json 區塊、JSON 前後夾雜說明文字。"""
+    text = (text or "").strip()
+    try:
+        return json.loads(text)  # 先試整段，內容裡的 ``` 才不會被誤認成外層的程式碼區塊
+    except json.JSONDecodeError:
+        pass
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise ParseError("回應中找不到 JSON 物件") from None
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError as e:
+            raise ParseError(f"JSON 格式錯誤：{e}") from None
+
+
+# ---- 供應商 ----
+@dataclass
+class ScriptedClient:
+    """不連網的假 LLM：用固定回應或函式產生回應。給測試與流程演練用。"""
+
+    respond: Callable[[str, str], str] | list[str]
+    model: str = "scripted"
+    last_usage: dict[str, int] | None = None
+
+    def complete(self, system: str, user: str) -> str:
+        if callable(self.respond):
+            return self.respond(system, user)
+        if not self.respond:
+            raise RuntimeError("ScriptedClient 的回應已用完")
+        return self.respond.pop(0)
+
+
+class GeminiClient:
+    """呼叫 Google Gemini API（google-genai SDK）。
+
+    逾時、額度不足與伺服器錯誤由 SDK 自動重試；重試後仍失敗會丟出例外，
+    由呼叫端（例如 LLMGovernment）記錄並改用 fallback。
+    """
+
+    provider = "gemini"
+
+    def __init__(
+        self,
+        model: str = DEFAULT_GEMINI_MODEL,
+        api_key: str | None = None,
+        temperature: float = 0.0,
+        seed: int | None = None,
+        timeout_s: float = 60.0,
+        attempts: int = 4,
+        json_mode: bool = True,
+        client: Any = None,  # 測試時可傳入假的 SDK client
+    ):
+        self.model = model
+        self.temperature = temperature
+        self.seed = seed
+        self.json_mode = json_mode
+        self.last_usage: dict[str, int] | None = None
+        if client is None:
+            client = self._make_sdk_client(api_key, timeout_s, attempts)
+        self._client = client
+
+    @staticmethod
+    def _make_sdk_client(api_key: str | None, timeout_s: float, attempts: int) -> Any:
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError as e:
+            raise ImportError('尚未安裝 Gemini SDK，請執行 pip install -e ".[llm]"') from e
+        if not api_key:
+            raise ValueError("尚未設定 Gemini API key（LLM_API_KEY 或 GEMINI_API_KEY）")
+        return genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=int(timeout_s * 1000),  # SDK 的單位是毫秒
+                retry_options=types.HttpRetryOptions(
+                    attempts=attempts, http_status_codes=list(RETRY_STATUS_CODES)
+                ),
+            ),
+        )
+
+    def complete(self, system: str, user: str) -> str:
+        config: dict[str, Any] = {"system_instruction": system, "temperature": self.temperature}
+        if self.json_mode:
+            config["response_mime_type"] = "application/json"  # 要求模型只回傳 JSON
+        if self.seed is not None:
+            config["seed"] = self.seed
+
+        response = self._client.models.generate_content(model=self.model, contents=user, config=config)
+        self.last_usage = _usage(response)
+        text = response.text
+        if not text:
+            raise LLMError(f"Gemini 沒有回傳文字（finish_reason={_finish_reason(response)}）")
+        return text
+
+
+def _usage(response: Any) -> dict[str, int] | None:
+    meta = getattr(response, "usage_metadata", None)
+    if meta is None:
+        return None
+    fields_ = {
+        "prompt_tokens": "prompt_token_count",
+        "output_tokens": "candidates_token_count",
+        "thinking_tokens": "thoughts_token_count",
+        "total_tokens": "total_token_count",
+    }
+    return {k: getattr(meta, v) or 0 for k, v in fields_.items()}
+
+
+def _finish_reason(response: Any) -> str:
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        feedback = getattr(response, "prompt_feedback", None)
+        return f"沒有候選回應，prompt_feedback={feedback}"
+    return str(getattr(candidates[0], "finish_reason", "未知"))
+
+
+def make_client() -> LLMClient | None:
+    """依環境變數建立 LLM client；LLM_PROVIDER 留空時回傳 None。"""
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if not provider:
+        return None
+    if provider == "gemini":
+        seed = os.getenv("LLM_SEED", "").strip()
+        return GeminiClient(
+            model=os.getenv("LLM_MODEL", "").strip() or DEFAULT_GEMINI_MODEL,
+            api_key=os.getenv("LLM_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip(),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0") or 0),
+            seed=int(seed) if seed else None,
+        )
+    raise ValueError(f"未知的 LLM_PROVIDER：{provider}（目前支援 gemini）")
+
+
+def load_dotenv(path: str | Path = ".env") -> None:
+    """讀入 .env 的 KEY=VALUE；已經設定的環境變數不會被覆蓋。不依賴額外套件。"""
+    path = Path(path)
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
