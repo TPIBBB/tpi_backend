@@ -264,12 +264,21 @@ python -m pytest
 
 ### 經由 API 執行
 
+需要兩個終端機：
+
 ```bash
+# 終端機 A：啟動 world-api，會印出這次的 run_id；互動式文件在 http://localhost:8000/docs
 python -m civsim serve --config configs/baseline.yaml
-# 啟動 world-api，文件在 http://localhost:8000/docs
+
+# 終端機 B：扮演政府，經 HTTP 把整個 run 跑完（預設是每天都不行動的政府，用來測試連線）
+python -m civsim govern
 ```
 
-政府經 digiRunner 呼叫的路徑（`api/government.py`）尚未實作；引擎已提供 `begin_tick()` → `government_observation()` → `step(decisions)` 給 API 模式使用。PostgreSQL 與 digiRunner 用 `docker compose up` 啟動（digiRunner 設定待補）。
+政府的路徑採用 lockstep：政府每送一次決策，世界就前進一天；每次天災結束會停下來等政府反思。
+格式與各項待確認的決定見 [docs/api.md](docs/api.md)。
+
+`civsim govern --base-url <網址>` 可以改連 digiRunner；`--controller llm` 改用 LLM 政府（等 Agent 串接供應商後可用）。
+PostgreSQL 與 digiRunner 用 `docker compose up` 啟動（digiRunner 設定待補）。
 
 # 專案結構
 
@@ -289,6 +298,7 @@ configs/             實驗條件設定檔
 rules/               社會規則集（有版本號）
 db/schema.sql        PostgreSQL schema
 docs/architecture.md 架構與專案邊界
+docs/api.md          world-api 的 HTTP 格式（政府路徑、lockstep、待確認的決定）
 docs/society.md      社會規則：初始狀態、回合流程、市場、均衡價格、天災、政府行動
 tests/
 ```
