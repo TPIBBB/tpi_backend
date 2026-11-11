@@ -1,16 +1,31 @@
-# 基準實驗：資訊與權限平均分配(平等社會)
-# 每個人都有read:prices 和 read:forecast 權限，都看得到市價和減產預報
-# 沒有人有授權能力
-name: baseline_equal
+# 基準模擬：沒有政府，只看平民與天災本身。各欄位的意義見 docs/society.md，沒寫的欄位用 config.py 的預設值。
+name: baseline
 seed: 42
-ticks: 30
-roles: {farmer: 8, woodcutter: 6, craftsman: 4, merchant: 6}
-initial_inventory: {food: 8, wood: 0, tools: 1, money: 50}
-action_points: 2
-agent_controller: rule_based   # rule_based | llm
-allow_info_sharing: true
-institution:
-  preset: equal
-events:
-  food_shock_prob: 0.15
-  food_shock_multiplier: 0.4
+population: {producer_trader: 10, producer_self: 5, consumer: 20, dependent: 5}
+citizens:
+  wage: 12
+  harvest_min: 5
+  harvest_max: 9
+  noncompliance_rate: 0.3
+market:
+  base_price: 5.0
+  anchor_weight: 0.5
+government:
+  controller: none   # none | llm
+  budget: 1000
+  food_reserve: 100
+  memory: true
+  max_decisions_per_day: 1   # 一天一個決策
+disasters:
+  count: 5
+  stable_days: 20
+  disaster_days: 5
+  evaluation_days: 15
+  food_multiplier: 0.2
+equilibrium:
+  calibration_days: 80
+  burn_in_days: 20
+  k: 2.0
+social_rules:
+  path: rules/v0.yaml
+  mode: enforce      # enforce | record（B 組）| off

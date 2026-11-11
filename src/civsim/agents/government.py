@@ -1,4 +1,4 @@
-"""AI 政府的決策與反思。負責人：Agent。（尚未接進引擎）
+"""AI 政府的決策與反思。負責人：Agent。引擎（world/engine.py）每天呼叫 decide，評估期結束時呼叫 reflect。
 
 決策：GovernmentObservation → prompt → LLM 回傳 JSON 決策 → 解析成 GovernmentDecision。
 反思：天災報告 + 目前的記憶 → prompt → LLM 回傳新版記憶 Markdown。
@@ -19,28 +19,22 @@ from civsim.world.government import (
     GOV_ID, GovernmentActionType, GovernmentDecision, GovernmentObservation,
 )
 
-GOV_PROMPT_VERSION = "gov-v2"
+GOV_PROMPT_VERSION = "gov-v3"
 
-PHASE_TEXT = {
-    "stable": "穩定期（目前沒有天災）",
-    "disaster": "天災期間（糧食減產中）",
-    "evaluation": "評估期（天災已結束，正在觀察價格能否恢復）",
-}
-
-# 給 LLM 看的決策說明。實際可用的決策以引擎的 GovernmentActionType 為準，
-# 引擎還沒實作的決策不會出現在 prompt 裡。名稱與參數需要和社會規則負責人確認。
+# 給 LLM 看的決策說明，對照 docs/society.md「政府的行動」與 world/government.py 的參數檢查。
+# 實際可用的決策以引擎的 GovernmentActionType 為準；沒有說明的決策只會列出名稱。
+_TARGET = '"target_type": 平民類型（選填，不填 = 所有人）'
 DECISION_DOCS = {
-    "idle": "{}，這回合不行動",
-    "distribute_food": '{"qty_per_person": 正數, "only_hungry": 布林}，從儲備發糧給平民',
-    "release_reserve": '{"qty": 正數}，把儲備賣到市場，壓低糧價並增加預算',
-    "buy_reserve": '{"qty": 正數}，用預算向市場買糧，會推高糧價',
-    "import_food": '{"qty": 正數}，向鎮外進口糧食到儲備，單價比市價高',
-    "cash_transfer": '{"per_person": 正數}，用預算發錢給每位平民',
-    "price_cap": '{"good": 商品名稱, "price": 正數, "duration": 回合數}，設定價格上限',
-    "collect_tax": '{"rate": 0 到 1 的比例}，向每位平民收取持有貨幣的比例',
-    "issue_currency": '{"amount": 正數}，發行新貨幣到預算，物價水準會上升',
-    "seize_food": '{"rate": 0 到 1 的比例}，徵收每位平民持有糧食的比例到儲備',
-    "force_sell": '{"rate": 0 到 1 的比例}，強制有產出的平民把多餘糧食的一部分賣到市場',
+    "idle": "{}，今天不行動",
+    "distribute_food": f'{{"qty_per_person": 正數, "only_hungry": 布林（選填）, {_TARGET}}}，從儲備發糧給平民',
+    "release_reserve": '{"qty": 正數, "price": 最低願賣價（選填，不填 = 市價）}，把儲備掛賣單到市場，增加預算',
+    "buy_reserve": '{"qty": 正數, "price": 最高願買價（選填，不填 = 習慣價格 × 2）}，用預算向市場買糧，會推高糧價',
+    "import_food": '{"qty": 正數（每天最多 100）}，以習慣價格 × 1.5 向鎮外進口糧食到儲備',
+    "cash_transfer": f'{{"per_person": 正數, "only_hungry": 布林（選填）, {_TARGET}}}，用預算發錢給平民',
+    "price_cap": '{"price": 正數, "duration": 天數（整數）}，設定糧價上限',
+    "collect_tax": f'{{"rate": 0 到 1 的比例, {_TARGET}}}，收取平民持有貨幣的比例到預算',
+    "issue_currency": '{"amount": 正數}，發行新貨幣到預算，習慣價格會隨貨幣量上升',
+    "seize_food": f'{{"rate": 0 到 1 的比例, {_TARGET}}}，徵收平民存糧的比例到儲備',
     "execute_citizen": '{"target": 平民 id}，處決一位平民',
 }
 
@@ -73,13 +67,13 @@ def build_system_prompt(action_types: Iterable[GovernmentActionType] = Governmen
     decisions = "\n".join(f"- {a.value}：{DECISION_DOCS.get(a.value, '參數待補')}" for a in action_types)
     return f"""你是虛擬小鎮的政府，負責治理一群平民並應對天災。
 
-你的目標：天災發生後，讓糧食（food）價格回到正常的均衡水準，並一直維持到評估期結束。
-評估期內價格只要跑出均衡區間一次，這次天災就算失敗。
+你的目標：天災會讓糧食（food）減產、價格上漲。天災過後，讓糧價回到正常的均衡水準，並一直維持到評估期結束。
 
 你要知道的事：
-- 一天就是一回合。每天你可以提出零到多個決策，也可以什麼都不做。
-- 沒有天災預報。天災發生時你才會知道，請依記憶中過去的經驗判斷怎麼應對。
-- 你看得到市場價格、自己的預算與儲備、死亡人數和挨餓人數，看不到平民各自的庫存。
+- 一天就是一回合。你每天只能做一個決策，不想行動就回傳 idle 或空清單；多送的決策會被拒絕。
+- 沒有天災預報，也不會有人告訴你天災何時開始或結束，請從價格、挨餓與死亡人數的變化自己判斷。
+- 你看得到昨天的成交價、自己的預算與儲備、人口、死亡與挨餓人數、平民的 id 與類型、目前的價格上限，看不到平民各自的存糧與存款。
+- 平民類型：producer_trader（種糧並賣掉多的）、producer_self（自耕自食，不買賣）、consumer（打工，用錢買糧）、dependent（不生產也不買賣，存糧吃完只能靠政府發糧）。
 - 平民依固定規則工作與交易，有一部分人不會服從你的政策。
 - 你的決策由模擬引擎驗證；資源不足或違反社會規則的決策會被拒絕，拒絕理由會出現在近期決策裡。
 - 每次天災的評估期結束後，社會會被重置回天災前的狀態，只有你的記憶會留下來。
@@ -98,14 +92,14 @@ def build_prompt(obs: GovernmentObservation) -> str:
     """把觀察整理成三段：數字用 JSON，規則用清單，記憶保留原本的 Markdown。"""
     state = {
         "tick": obs.tick,
-        "phase": PHASE_TEXT.get(obs.phase, obs.phase),
-        "days_since_disaster": obs.days_since_disaster,
         "prices": obs.prices,
         "budget": obs.budget,
         "food_reserve": obs.food_reserve,
+        "population": obs.population,
         "deaths": obs.deaths,
         "hungry": obs.hungry,
-        "target_price_range": obs.target_price_range,
+        "price_cap": obs.price_cap,
+        "citizens": obs.citizens,
         "recent_decisions": obs.recent_decisions,
     }
     # 沒有的資訊不要給 LLM 看，避免它猜測 None 的意思

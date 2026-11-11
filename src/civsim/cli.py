@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import random
 from pathlib import Path
 
 from civsim.config import load_config
@@ -14,10 +13,16 @@ def cmd_run(args) -> None:
 
     config = load_config(args.config, seed=args.seed, ticks=args.ticks)
     out = Path(args.out) / config.name / f"seed{config.seed}"
-    history = run_one(config, out)
-    for m in history:
-        print(f"tick {m['tick']:>3}  alive={m['alive']:>2}  gini={m['wealth_gini']:.3f}  "
-              f"authorities={m['n_authorities']}  food_price={m['prices']['food']:.2f}")
+    engine = run_one(config, out)
+    band = engine.band
+    print(f"均衡區間 {band.low:.2f} ~ {band.high:.2f}（平均 {band.mean:.2f}，標準差 {band.std:.2f}）")
+    for m in engine.history:
+        mark = "" if m.get("in_band", True) else "  ← 區間外"
+        print(f"tick {m['tick']:>3}  {m['phase']:<10}  price={m['price']:>6.2f}  volume={m['volume']:>6.1f}  "
+              f"hungry={m['hungry']:>2}  budget={m['gov_budget']:>8.1f}  reserve={m['gov_reserve']:>6.1f}{mark}")
+    for r in engine.reports:
+        print(f"天災 {r['disaster_id']}：{'成功' if r['success'] else '失敗'}"
+              f"（評估期第 {r['recovered_day']} 天回到區間，最高價 {r['peak_price']:.2f}）")
     print(f"\n紀錄已寫入 {out}")
 
 
@@ -40,17 +45,6 @@ def cmd_serve(args) -> None:
     uvicorn.run(create_app(engine), host=args.host, port=args.port)
 
 
-def cmd_remote(args) -> None:
-    from civsim.agents import build_controllers
-    from civsim.gateway.client import HttpWorldClient, run_remote
-    from civsim.world.setup import create_world
-
-    config = load_config(args.config, seed=args.seed)
-    # Agent 端只需要知道有哪些 Agent，以同樣的 seed 建立決策模組
-    world = create_world(config, random.Random(config.seed))
-    run_remote(HttpWorldClient(args.base_url), build_controllers(world, config), args.ticks or config.ticks)
-
-
 def cmd_llm_check(args) -> None:
     """用一個假的天災情境呼叫一次 LLM 政府，確認 API key 與模型設定可以用。"""
     from civsim.agents.government import build_prompt, make_government
@@ -59,7 +53,8 @@ def cmd_llm_check(args) -> None:
     gov = make_government()
     obs = GovernmentObservation(
         tick=12, prices={"food": 8.5}, memory="", rules=["不能處決平民"],
-        phase="disaster", days_since_disaster=2, budget=500.0, food_reserve=40.0, deaths=0,
+        budget=500.0, food_reserve=40.0, population=20, deaths=0, hungry=3,
+        citizens=[{"id": "c01", "type": "farmer_trader"}, {"id": "c02", "type": "worker"}],
     )
     print(f"模型：{gov.client.model}\n\n--- 送出的觀察 ---\n{build_prompt(obs)}")
     decisions = gov.decide(obs)
@@ -97,13 +92,6 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(func=cmd_serve)
-
-    p = sub.add_parser("remote", help="Agent 端：經由 Gateway 呼叫 world-api 跑模擬")
-    p.add_argument("--config", default="configs/baseline.yaml")
-    p.add_argument("--seed", type=int)
-    p.add_argument("--ticks", type=int)
-    p.add_argument("--base-url", help="預設讀 DIGIRUNNER_BASE_URL")
-    p.set_defaults(func=cmd_remote)
 
     p = sub.add_parser("llm-check", help="呼叫一次 LLM 政府，確認 API key 與模型設定")
     p.set_defaults(func=cmd_llm_check)

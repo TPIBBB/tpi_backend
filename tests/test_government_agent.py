@@ -27,8 +27,8 @@ def make_obs(**overrides) -> GovernmentObservation:
 # ---- prompt ----
 def test_system_prompt_lists_only_actions_the_engine_supports():
     prompt = build_system_prompt()
-    assert "idle" in prompt
-    assert "execute_citizen" not in prompt  # 引擎還沒實作的決策不能讓政府選
+    assert "idle" in prompt and "execute_citizen" in prompt
+    assert "publish_forecast" not in prompt  # 引擎沒有的決策不能讓政府選
 
 
 def test_system_prompt_follows_engine_action_list():
@@ -47,11 +47,11 @@ def test_prompt_contains_rules_and_memory():
 
 
 def test_prompt_state_is_json_and_hides_missing_fields():
-    prompt = build_prompt(make_obs(phase="disaster", days_since_disaster=2, budget=500.0))
+    prompt = build_prompt(make_obs(budget=500.0, hungry=3, citizens=[{"id": "c01", "type": "consumer"}]))
     state = json.loads(prompt.split("```json\n")[1].split("\n```")[0])
-    assert state["tick"] == 3 and state["budget"] == 500.0 and state["days_since_disaster"] == 2
-    assert "天災期間" in state["phase"]
-    assert "hungry" not in state and "food_reserve" not in state  # 沒有的資訊不給 LLM
+    assert state["tick"] == 3 and state["budget"] == 500.0 and state["hungry"] == 3
+    assert state["citizens"] == [{"id": "c01", "type": "consumer"}]
+    assert "price_cap" not in state  # 沒有的資訊不給 LLM
 
 
 def test_prompt_says_when_there_are_no_rules_or_memory():
