@@ -86,7 +86,7 @@ def cmd_llm_check(args) -> None:
     obs = GovernmentObservation(
         tick=12, prices={"food": 8.5}, memory="", rules=["不能處決平民"],
         budget=500.0, food_reserve=40.0, population=20, deaths=0, hungry=3,
-        citizens=[{"id": "c01", "type": "farmer_trader"}, {"id": "c02", "type": "worker"}],
+        citizens=[{"id": "c01", "type": "producer_trader"}, {"id": "c02", "type": "consumer"}],
     )
     print(f"模型：{gov.client.model}\n\n--- 送出的觀察 ---\n{build_prompt(obs)}")
     decisions = gov.decide(obs)
@@ -125,10 +125,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(func=cmd_serve)
 
-<<<<<<< HEAD
     p = sub.add_parser("llm-check", help="呼叫一次 LLM 政府，確認 API key 與模型設定")
     p.set_defaults(func=cmd_llm_check)
-=======
+
     p = sub.add_parser("govern", help="扮演政府：經 HTTP（直連或 digiRunner）把 world-api 上的 run 跑完")
     p.add_argument("--base-url", help="不給就用環境變數 DIGIRUNNER_BASE_URL，再沒有就是 http://localhost:8000")
     p.add_argument("--run-id", help="不給就用 world-api 目前唯一的 run")
@@ -137,7 +136,6 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--retries", type=int, default=3, help="基礎設施錯誤最多重試幾次")
     p.add_argument("--quiet", action="store_true", help="不印每天的結果")
     p.set_defaults(func=cmd_govern)
->>>>>>> 5b9f23848dd89dd025d9fb19c15f58df2a847623
 
     args = parser.parse_args(argv)
     args.func(args)
