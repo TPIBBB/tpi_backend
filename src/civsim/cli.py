@@ -42,7 +42,39 @@ def cmd_serve(args) -> None:
     from civsim.world import SimulationEngine
 
     engine = SimulationEngine(load_config(args.config, seed=args.seed))
-    uvicorn.run(create_app(engine), host=args.host, port=args.port)
+    app = create_app(engine)
+    print(f"run_id = {app.state.run_id}（政府的路徑：/runs/{app.state.run_id}/government/...）")
+    uvicorn.run(app, host=args.host, port=args.port)
+
+
+def cmd_govern(args) -> None:
+    from civsim.agents import NoGovernment, make_government
+    from civsim.gateway.client import HttpWorldClient, RunInvalid, run_government
+
+    controller = NoGovernment() if args.controller == "none" else make_government()
+
+    def show(r: dict) -> None:
+        if r.get("recovered"):
+            print(f"tick {r['tick']:>4}  （逾時後確認已送達，沒有當天的結算結果）")
+            return
+        made = "、".join(f"{d['type']}{'' if d['accepted'] else '（被拒絕）'}" for d in r["decisions"]) or "不行動"
+        print(f"tick {r['tick']:>4}  price={r['price']:>7.3f}  {made}")
+
+    def show_reflection(report: dict, r: dict) -> None:
+        memory = {"updated": f"更新為第 {r['memory_version']} 版", "unchanged": "不更新",
+                  "rejected": "被拒絕（太長或格式錯誤）", None: "（逾時後確認已送達）"}[r["memory_result"]]
+        print(f"── 天災 {report['disaster_id']} 結束：{'成功' if report['success'] else '失敗'}，記憶{memory}，世界調回均衡狀態")
+
+    try:
+        client = HttpWorldClient(args.base_url, run_id=args.run_id, max_retries=args.retries)
+        print(f"run_id = {client.run_id}，政府 = {args.controller}")
+        summary = run_government(client, controller, on_day=None if args.quiet else show,
+                                 on_reflect=show_reflection)
+    except RunInvalid as e:
+        print(f"\nrun 作廢：{e}")
+        raise SystemExit(1) from None
+    print(f"\n完成：共 {summary['days']} 天、反思 {summary['reflections']} 次，"
+          f"逾時後確認已送達 {summary['recovered']} 次")
 
 
 def cmd_llm_check(args) -> None:
@@ -93,8 +125,19 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(func=cmd_serve)
 
+<<<<<<< HEAD
     p = sub.add_parser("llm-check", help="呼叫一次 LLM 政府，確認 API key 與模型設定")
     p.set_defaults(func=cmd_llm_check)
+=======
+    p = sub.add_parser("govern", help="扮演政府：經 HTTP（直連或 digiRunner）把 world-api 上的 run 跑完")
+    p.add_argument("--base-url", help="不給就用環境變數 DIGIRUNNER_BASE_URL，再沒有就是 http://localhost:8000")
+    p.add_argument("--run-id", help="不給就用 world-api 目前唯一的 run")
+    p.add_argument("--controller", choices=["none", "llm"], default="none",
+                   help="none = 每天都不行動（測試連線用）；llm = Agent 組的 LLM 政府")
+    p.add_argument("--retries", type=int, default=3, help="基礎設施錯誤最多重試幾次")
+    p.add_argument("--quiet", action="store_true", help="不印每天的結果")
+    p.set_defaults(func=cmd_govern)
+>>>>>>> 5b9f23848dd89dd025d9fb19c15f58df2a847623
 
     args = parser.parse_args(argv)
     args.func(args)

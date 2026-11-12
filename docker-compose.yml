@@ -12,12 +12,55 @@ services:
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - pgdata:/var/lib/postgresql/data
 
-  # TODO: 加入 digiRunner。請依團隊使用的 digiRunner 版本，
-  # 參考官方文件設定 image、port 與管理後台，並把 world-api 註冊為後端服務。
-  # digirunner:
-  #   image: <依官方文件>
-  #   ports:
-  #     - "18080:18080"
+  # digiRunner 開源版（https://github.com/TPIsoftwareOSPO/digiRunner-Open-Source）
+  # 管理後台：http://localhost:31080/dgrv4/ac4/login（第一次啟動的預設帳密見官方 README，登入後請改密碼）
+  #
+  # 資料庫：照官方的「永久資料庫」設定（https://docs.tpi.dev/get-started/installation/docker-compose.md），
+  # 存成 H2 檔案，放在 Docker 的具名 volume dgrdb。註冊的 API、帳號、密碼在重啟、stop、down 後都會保留。
+  # 和官方範例不同的地方：用具名 volume 而不是 ./db 資料夾，因為 ./db 已經放了 PostgreSQL 的 schema，
+  # 而且專案若放在 OneDrive 等同步資料夾，同步正在寫入的資料庫檔可能造成損壞。
+  # ⚠️ docker compose down -v 會連 volume 一起刪掉，所有設定會消失。
+  #
+  # TODO（第 2 週）：把 world-api 註冊為後端服務
+
+  # 每次啟動前先檢查資料庫檔是否存在：第一次啟動就建立資料庫，之後沿用，不會覆蓋
+  dgr-h2db-detect:
+    image: bash
+    volumes:
+      - dgrdb:/opt/db
+      - dgrshared:/opt/shared
+    command: |
+      bash -c '
+      cat << EOF > /opt/shared/dgr.args
+      -Xms2g
+      -Xmx4g
+      -DdigiRunner.token.key-store.path=/opt/digirunner/keys
+      -Dserver.port=18080
+      -Dspring.datasource.url=jdbc:h2:/opt/digirunner/db/dgrdb;NON_KEYWORDS=VALUE;Mode=MySQL
+      EOF
+      ls /opt/db/*.db &> /dev/null && echo "-Dspring.sql.init.mode=never" >> /opt/shared/dgr.args || echo "-Dspring.sql.init.mode=always" >> /opt/shared/dgr.args;
+      cat /opt/shared/dgr.args
+      '
+
+  dgr:
+    image: tpisoftwareopensource/digirunner-open-source
+    depends_on:
+      dgr-h2db-detect:
+        condition: service_completed_successfully
+    ports:
+      # 只開放給本機（127.0.0.1）；主機的 31080 對到容器內的 18080。
+      # 寫成 "31080:18080" 會對整個網路開放，同一個 Wi-Fi 的人都可能連到 digiRunner。
+      - "127.0.0.1:31080:18080"
+    environment:
+      - TZ=Asia/Taipei
+    command:
+      - "@/opt/shared/dgr.args"
+      - "org.springframework.boot.loader.launch.PropertiesLauncher"
+    volumes:
+      - dgrdb:/opt/digirunner/db
+      - dgrshared:/opt/shared
 
 volumes:
   pgdata:
+  dgrdb:
+  dgrshared:

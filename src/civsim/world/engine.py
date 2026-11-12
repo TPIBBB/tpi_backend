@@ -76,6 +76,12 @@ class SimulationEngine:
         self._tick_open = False
         self._pending_events: list[Event] = []
 
+        # 遠端反思（API 模式）：評估期最後一天跑完後先不重置世界，停在這裡等 submit_memory()。
+        # 本機模式（False）直接呼叫 self.government.reflect()。見 docs/api.md 的 D6。
+        self.remote_reflection = False
+        self.pending_reflection: dict | None = None  # 等待反思的天災報告
+        self._deferred: tuple | None = None  # (天災, 當天的世界, 當天的事件, 當天的指標)，反思完才寫入紀錄
+
     # ---- 天災週期 ----
     def _start_cycle(self, cycle: int) -> None:
         from civsim.agents import build_citizens
@@ -149,6 +155,8 @@ class SimulationEngine:
 
     def step(self, decisions: list[GovernmentDecision] | None = None) -> list[Event]:
         """執行一個回合。decisions=None 時由本機的政府決策；API 模式下由外部送入。"""
+        if self.pending_reflection is not None:
+            raise RuntimeError("正在等待政府反思，請先呼叫 submit_memory()")
         world = self.world
         events = list(self.begin_tick())
         self._tick_open = False
@@ -195,6 +203,9 @@ class SimulationEngine:
         d = disaster_at(self.schedule, world.tick)
         if d is not None and world.tick == d.window_end:
             events.extend(self._close_cycle(d))
+            if self.pending_reflection is not None:  # 遠端反思：這一天要等記憶送來才算結束
+                self._deferred = (d, world, events, metrics)
+                return events
 
         self.recorder.record_tick(world, events, metrics)
         self.world.tick += 1
@@ -240,16 +251,35 @@ class SimulationEngine:
             self.recorder.record_disaster(report)
             events.append(Event(self.world.tick, "world:disaster_report", None, True,
                                 {k: v for k, v in report.items() if k != "decisions"}))
+            if self.remote_reflection and self.config.government.memory:
+                self.pending_reflection = report  # 先不重置，等 submit_memory()
+                return events
             events.extend(self._reflect(report))
         events.append(self._reset_to_equilibrium(d))
         return events
 
+    def submit_memory(self, new: str | None) -> list[Event]:
+        """遠端反思：送入政府的新版記憶（None = 不更新），接著把世界調回均衡狀態，結束評估期最後一天。"""
+        if self.pending_reflection is None:
+            raise RuntimeError("目前沒有等待反思的天災")
+        d, world, events, metrics = self._deferred
+        closing = self._apply_memory(new)
+        closing.append(self._reset_to_equilibrium(d))
+        self.pending_reflection = self._deferred = None
+        events.extend(closing)
+        self.recorder.record_tick(world, events, metrics)
+        self.world.tick += 1
+        return closing
+
     def _reflect(self, report: dict) -> list[Event]:
-        """引擎只檢查記憶的長度與格式，不審查內容；每個版本都保存。"""
         cfg = self.config.government
         if self.government is None or not cfg.memory:
             return []
-        new = self.government.reflect(report, self.memory)
+        return self._apply_memory(self.government.reflect(report, self.memory))
+
+    def _apply_memory(self, new) -> list[Event]:
+        """引擎只檢查記憶的長度與格式，不審查內容；每個版本都保存。"""
+        cfg = self.config.government
         tick = self.world.tick
         if new is None:
             return [Event(tick, "gov:memory_unchanged", GOV_ID, True)]
