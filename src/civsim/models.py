@@ -34,7 +34,10 @@ class CitizenType(str, Enum):
 
 
 class ActionType(str, Enum):
-    """平民一天只能做一個動作。吃東西是每天結束時自動發生的，不算動作。"""
+    """平民的動作。一天可以生產一次（harvest／work）加上一張買賣單（buy／sell），見 world/rules.py。
+
+    吃東西是每天結束時自動發生的，不算動作。
+    """
 
     HARVEST = "harvest"  # 有產出的平民：收成
     WORK = "work"  # 沒產出、有買賣的平民：打工領固定收入

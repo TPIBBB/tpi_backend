@@ -49,10 +49,14 @@ class GovernmentConfig:
     memory: bool = True  # False = 無記憶組，不呼叫 reflect
     initial_memory: str = ""
     memory_max_chars: int = 4000
-    max_decisions_per_day: int = 1  # 和平民一樣一天一個動作；第 2 個以後的決策會被拒絕
+    max_decisions_per_day: int = 1  # 一天一個決策；第 2 個以後的決策會被拒絕
     import_premium: float = 1.5  # 進口單價 = 習慣價格 × 這個倍率
     max_import_per_day: float = 100.0
     recent_decisions: int = 20  # 觀察裡保留最近幾筆決策結果
+    # 什麼時候呼叫 LLM（agents/government.py）：always = 每天；on_change = 狀況沒變就沿用上次的決策，不呼叫
+    call_policy: str = "always"
+    price_tolerance: float = 0.05  # on_change：價格和上次呼叫時相差不到 5% 算沒變
+    max_skip_days: int = 5  # on_change：最多連續幾天不呼叫，之後一定會呼叫一次
 
 
 @dataclass

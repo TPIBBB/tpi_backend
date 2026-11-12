@@ -168,3 +168,47 @@ def test_government_gets_one_decision_per_day(small_config):
     rejected = [e for e in events if e.kind == "gov:rejected"]
     assert len(rejected) == 1 and "決策上限 1" in rejected[0].message
     assert engine.government_observation().recent_decisions[-1]["accepted"] is False
+
+
+def test_citizen_can_harvest_then_sell_the_same_day(small_config):
+    from civsim.models import Action, ActionType, CitizenType
+
+    engine = SimulationEngine(small_config, government=None, band=None)
+    farmer = next(c for c in engine.world.citizens.values() if c.type == CitizenType.PRODUCER_TRADER)
+    farmer.food = 0.0  # 沒收成就沒有糧可以賣
+
+    class HarvestAndSell:
+        def decide(self, obs):
+            return [Action(farmer.id, ActionType.SELL, {"qty": 3, "price": 0}),
+                    Action(farmer.id, ActionType.HARVEST, {}),
+                    Action(farmer.id, ActionType.WORK, {})]  # 第二個生產動作會被拒絕
+
+    engine.citizens[farmer.id] = HarvestAndSell()
+    events = [e for e in engine.step() if e.actor == farmer.id]
+    by_type = {e.kind: e for e in events}
+    assert by_type["action:harvest"].success and by_type["action:sell"].success  # 先收成，所以賣得出去
+    assert not by_type["action:extra"].success and by_type["action:extra"].payload["dropped"] == ["work"]
+
+
+def test_failed_reflection_is_logged_separately(small_config):
+    def respond(system, user):
+        if "current_memory" in user:
+            raise TimeoutError("連線逾時")
+        return json.dumps({"actions": []})
+
+    engine = SimulationEngine(small_config, government=LLMGovernment(ScriptedClient(respond)))
+    kinds = [e.kind for _ in range(small_config.total_ticks) for e in engine.step()]
+    assert kinds.count("gov:memory_failed") == small_config.disasters.count
+    assert "gov:memory_unchanged" not in kinds and engine.memory_versions == [""]
+
+
+def test_llm_calls_are_written_to_llm_calls_jsonl(small_config, tmp_path):
+    from civsim.storage import JsonlRecorder
+
+    gov = scripted_government([{"type": "idle", "reason": "觀望"}])
+    engine = SimulationEngine(small_config, government=gov, recorder=JsonlRecorder(tmp_path))
+    engine.run()
+    rows = [json.loads(line) for line in (tmp_path / "llm_calls.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == len(gov.calls) == small_config.total_ticks + small_config.disasters.count
+    assert {r["trigger"] for r in rows} == {"decide", "reflect"}
+    assert all(r["prompt"] and r["response"] for r in rows)

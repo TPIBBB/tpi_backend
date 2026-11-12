@@ -5,6 +5,9 @@
 政府只能提出決策與新版記憶，兩者都由引擎驗證後才生效。
 
 LLM 呼叫失敗或回應無法解析時，決策改用 fallback（預設是不行動），記憶維持不變，避免整個模擬中斷。
+
+省呼叫次數（call_policy="on_change"）：狀況和上次呼叫 LLM 時差不多，就沿用上次的決策、不呼叫 LLM。
+上次決策被拒絕、記憶剛更新、或已經連續 max_skip_days 天沒呼叫時，一定會呼叫。跳過的天也會記一筆 LLMCall（used_llm=False）。
 每次呼叫都記錄在 LLMGovernment.calls（含 prompt、回應、token 用量），確保實驗可重現。
 """
 
@@ -12,6 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import Protocol
 
 from civsim.agents.llm_client import LLMCall, LLMClient, ParseError, extract_json, make_client
@@ -20,6 +24,8 @@ from civsim.world.government import (
 )
 
 GOV_PROMPT_VERSION = "gov-v3"
+CALL_POLICIES = ("always", "on_change")
+HUNGRY_TOLERANCE = 0.1  # on_change：挨餓人數的變化在人口的 10% 以內算沒變
 
 # 給 LLM 看的決策說明，對照 docs/society.md「政府的行動」與 world/government.py 的參數檢查。
 # 實際可用的決策以引擎的 GovernmentActionType 為準；沒有說明的決策只會列出名稱。
@@ -185,31 +191,74 @@ class LLMGovernment:
         client: LLMClient,
         fallback: GovernmentController | None = None,
         max_decisions: int | None = None,  # 一天最多幾個決策；None 表示不限制
+        call_policy: str = "always",
+        price_tolerance: float = 0.05,
+        max_skip_days: int = 5,
     ):
+        if call_policy not in CALL_POLICIES:
+            raise ValueError(f"未知的 call_policy: {call_policy}，可用：{CALL_POLICIES}")
         self.client = client
         self.fallback = fallback or NoGovernment()
         self.max_decisions = max_decisions
+        self.call_policy = call_policy
+        self.price_tolerance = price_tolerance
+        self.max_skip_days = max_skip_days
         self.calls: list[LLMCall] = []
+        self.last_reflect_error: str | None = None  # 上一次反思失敗的原因；引擎用來區分「失敗」和「不修改」
+        self._last_obs: GovernmentObservation | None = None  # 上次成功呼叫 LLM 時的觀察
+        self._last_decisions: list[GovernmentDecision] = []
+        self._skipped = 0  # 已經連續幾天沒呼叫
 
     def decide(self, obs: GovernmentObservation) -> list[GovernmentDecision]:
+        if self.call_policy == "on_change":
+            same_as = self._unchanged_since(obs)
+            if same_as is not None:
+                self._skipped += 1
+                self.calls.append(LLMCall(
+                    obs.tick, GOV_ID, GOV_PROMPT_VERSION, self.client.model, used_llm=False,
+                    trigger=f"skip：狀況和第 {same_as} 天差不多，沿用當天的決策"))
+                return [replace(d) for d in self._last_decisions]
+
         record = self._new_call(obs.tick, "decide", build_prompt(obs))
+        self._skipped = 0
         try:
             record.response = self._complete(build_system_prompt(), record.prompt, record)
             decisions, record.skipped = parse_decisions(record.response, self.max_decisions)
-            return decisions
         except Exception as e:  # 網路、額度、格式錯誤都不能讓模擬中斷
             record.error = f"{type(e).__name__}: {e}"
             record.used_fallback = True
+            self._last_obs = None  # 失敗的那天不算數，隔天一定重新呼叫
             return self.fallback.decide(obs)
+        self._last_obs, self._last_decisions = obs, decisions
+        return decisions
+
+    def _unchanged_since(self, obs: GovernmentObservation) -> int | None:
+        """狀況和上次呼叫 LLM 時差不多就回傳那一天的 tick，否則回傳 None（要呼叫）。"""
+        last = self._last_obs
+        if last is None or self._skipped >= self.max_skip_days:
+            return None
+        recent = obs.recent_decisions[-1] if obs.recent_decisions else None
+        if recent is not None and recent.get("tick") == obs.tick - 1 and not recent.get("accepted", True):
+            return None  # 昨天的決策被拒絕，要讓 LLM 看到理由
+        old, new = last.prices.get("food"), obs.prices.get("food")
+        if old is None or new is None or abs(new - old) > self.price_tolerance * max(abs(old), 1e-9):
+            return None
+        # 挨餓人數每天會小幅跳動（例如只發一天份的糧），差距在人口的 10%（至少 2 人）以內算沒變
+        if abs(obs.hungry - last.hungry) > max(2, round(HUNGRY_TOLERANCE * max(obs.population, 1))):
+            return None
+        same = (last.deaths, last.population, last.price_cap, last.rules, last.memory) ==                (obs.deaths, obs.population, obs.price_cap, obs.rules, obs.memory)
+        return last.tick if same else None
 
     def reflect(self, report: dict, memory: str) -> str | None:
         prompt = build_reflection_prompt(report, memory)
         record = self._new_call(report.get("window_end", -1), "reflect", prompt)
+        self.last_reflect_error = None
+        self._last_obs = None  # 反思後記憶可能改了，下一天一定重新呼叫
         try:
             record.response = self._complete(REFLECT_SYSTEM_PROMPT, prompt, record)
             return parse_memory(record.response)
         except Exception as e:
-            record.error = f"{type(e).__name__}: {e}"
+            record.error = self.last_reflect_error = f"{type(e).__name__}: {e}"
             return None
 
     def _complete(self, system: str, user: str, record: LLMCall) -> str:
@@ -225,11 +274,11 @@ class LLMGovernment:
         return record
 
 
-def make_government(fallback: GovernmentController | None = None) -> LLMGovernment:
+def make_government(fallback: GovernmentController | None = None, **options) -> LLMGovernment:
     """依環境變數建立 AI 政府。沒有設定供應商時直接報錯，不靜靜改用 fallback，
     否則實驗結果會被誤認成 LLM 的決策。
     """
     client = make_client()
     if client is None:
         raise ValueError("尚未設定 LLM_PROVIDER，無法建立 AI 政府")
-    return LLMGovernment(client, fallback)
+    return LLMGovernment(client, fallback, **options)

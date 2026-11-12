@@ -1,13 +1,15 @@
 """LLM 供應商與共用工具。負責人：Agent。
 
 所有 LLM 呼叫都經過有 complete(system, user) -> str 的 LLMClient：
-- GeminiClient：正式實驗用，呼叫 Google Gemini API
+- GeminiClient：呼叫 Google Gemini API（免費版每天只有少量呼叫次數）
+- OpenAICompatibleClient：呼叫 OpenAI 相容 API，例如 Modal 上自己架的 vLLM（modal/llm_server.py）或本機 Ollama
 - ScriptedClient：不連網的假 LLM，給測試與流程演練用
 
 環境變數（可寫在專案根目錄的 .env，由 cli 讀入）：
-- LLM_PROVIDER：gemini；留空表示不使用 LLM
-- LLM_MODEL：模型 ID，預設 DEFAULT_GEMINI_MODEL；正式實驗前要鎖定
-- LLM_API_KEY（或 GEMINI_API_KEY）：Gemini API key
+- LLM_PROVIDER：gemini | modal（= openai_compatible）| ollama；留空表示不使用 LLM
+- LLM_MODEL：模型 ID；gemini 預設 DEFAULT_GEMINI_MODEL，其他要填伺服器上的模型名稱。正式實驗前要鎖定
+- LLM_BASE_URL：OpenAI 相容 API 的網址（到 /v1 為止）；ollama 預設 http://localhost:11434/v1
+- LLM_API_KEY（或 GEMINI_API_KEY）：Gemini API key，或 Modal 伺服器的金鑰
 - LLM_TEMPERATURE：預設 0，讓結果盡量可重現
 - LLM_SEED：固定的亂數種子（選填），Gemini 會盡量對相同輸入給出相同回應
 """
@@ -17,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -160,6 +163,94 @@ class GeminiClient:
         return text
 
 
+class OpenAICompatibleClient:
+    """呼叫 OpenAI 相容的 Chat Completions API：Modal 上的 vLLM（modal/llm_server.py）、Ollama 等。
+
+    base_url 指到 /v1 為止，例如 https://xxx.modal.run/v1 或 http://localhost:11434/v1。
+    遇到逾時、限流與伺服器錯誤會等一下再重試；重試後仍失敗會丟出 LLMError，由 LLMGovernment 改用 fallback。
+    """
+
+    provider = "openai_compatible"
+
+    def __init__(
+        self,
+        model: str,
+        base_url: str,
+        api_key: str | None = None,
+        temperature: float = 0.0,
+        seed: int | None = None,
+        timeout_s: float = 600.0,  # Modal 冷啟動（開機 + 載入模型）要等好幾分鐘
+        attempts: int = 4,
+        json_mode: bool = True,
+        transport: Any = None,  # 測試時可傳入 httpx.MockTransport
+    ):
+        try:
+            import httpx
+        except ImportError as e:
+            raise ImportError('尚未安裝 httpx，請執行 pip install -e ".[llm]"') from e
+        if not model:
+            raise ValueError("OpenAI 相容模式要設定 LLM_MODEL（伺服器上的模型名稱）")
+        if not base_url:
+            raise ValueError("OpenAI 相容模式要設定 LLM_BASE_URL，例如 https://xxx.modal.run/v1")
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.temperature = temperature
+        self.seed = seed
+        self.attempts = attempts
+        self.json_mode = json_mode
+        self.last_usage: dict[str, int] | None = None
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        # Modal 的請求超過 150 秒（例如冷啟動）會回 303，要照 Location 去拿結果，所以要跟著轉址
+        self._http = httpx.Client(headers=headers, timeout=timeout_s, transport=transport,
+                                  follow_redirects=True, max_redirects=30)
+        self._sleep = time.sleep
+
+    def complete(self, system: str, user: str) -> str:
+        import httpx
+
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "temperature": self.temperature,
+        }
+        if self.json_mode:
+            body["response_format"] = {"type": "json_object"}  # 要求模型只回傳 JSON
+        if self.seed is not None:
+            body["seed"] = self.seed
+
+        error = ""
+        for attempt in range(self.attempts):
+            if attempt:
+                self._sleep(min(2 ** attempt, 30))
+            try:
+                r = self._http.post(f"{self.base_url}/chat/completions", json=body)
+            except httpx.TransportError as e:  # 連不上、逾時
+                error = f"{type(e).__name__}: {e}"
+                continue
+            if r.status_code in RETRY_STATUS_CODES:
+                error = f"HTTP {r.status_code}: {r.text[:300]}"
+                continue
+            if r.status_code >= 300:
+                raise LLMError(f"HTTP {r.status_code}: {r.text[:300]}")
+            try:
+                data = r.json()
+            except ValueError:
+                raise LLMError(f"回應不是 JSON（HTTP {r.status_code}）：{r.text[:300]!r}") from None
+            usage = data.get("usage") or {}
+            self.last_usage = {
+                "prompt_tokens": usage.get("prompt_tokens") or 0,
+                "output_tokens": usage.get("completion_tokens") or 0,
+                "thinking_tokens": 0,
+                "total_tokens": usage.get("total_tokens") or 0,
+            } if usage else None
+            choice = (data.get("choices") or [{}])[0]
+            text = (choice.get("message") or {}).get("content")
+            if not text:
+                raise LLMError(f"模型沒有回傳文字（finish_reason={choice.get('finish_reason')}）")
+            return text
+        raise LLMError(f"重試 {self.attempts} 次仍失敗：{error}")
+
+
 def _usage(response: Any) -> dict[str, int] | None:
     meta = getattr(response, "usage_metadata", None)
     if meta is None:
@@ -194,7 +285,17 @@ def make_client() -> LLMClient | None:
             temperature=float(os.getenv("LLM_TEMPERATURE", "0") or 0),
             seed=int(seed) if seed else None,
         )
-    raise ValueError(f"未知的 LLM_PROVIDER：{provider}（目前支援 gemini）")
+    if provider in ("openai_compatible", "modal", "ollama"):
+        seed = os.getenv("LLM_SEED", "").strip()
+        return OpenAICompatibleClient(
+            model=os.getenv("LLM_MODEL", "").strip(),
+            base_url=os.getenv("LLM_BASE_URL", "").strip()
+            or ("http://localhost:11434/v1" if provider == "ollama" else ""),
+            api_key=os.getenv("LLM_API_KEY", "").strip() or None,
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0") or 0),
+            seed=int(seed) if seed else None,
+        )
+    raise ValueError(f"未知的 LLM_PROVIDER：{provider}（目前支援 gemini、openai_compatible／modal、ollama）")
 
 
 def load_dotenv(path: str | Path = ".env") -> None:

@@ -3,7 +3,7 @@
 一天（一回合）的流程：
 1. 天災          world/disasters.py   設定今天的階段與收成倍率
 2. 政府決策      agents/government.py 提出 → world/social_rules.py 檢查規則 → world/government.py 驗證與結算
-3. 平民決策      每位平民做一個動作：收成、打工、下買單或賣單
+3. 平民決策      每位平民跑一輪：依類型生產一次（收成／打工）、下一張買單或賣單，先生產再下單
 4. 市場          world/market.py      集合競價，所有成交都用同一個價格
 5. 吃飯          每人吃掉 food_per_day，不夠吃就算挨餓
 6. 記錄          事件、指標
@@ -71,6 +71,7 @@ class SimulationEngine:
 
         self.memory: str = config.government.initial_memory
         self.memory_versions: list[str] = [self.memory]
+        self._llm_calls_recorded = 0  # 政府的 LLM 呼叫紀錄（LLMGovernment.calls）已經寫出幾筆
         self.reports: list[dict] = []
         self.history: list[dict] = []
         self._tick_open = False
@@ -164,26 +165,33 @@ class SimulationEngine:
         # 2. 政府
         if decisions is None and self.government is not None:
             decisions = self.government.decide(self.government_observation())
+            self._record_llm_calls()
         events.extend(self._apply_government(decisions or []))
 
-        # 3. 平民：每人一個動作
-        actions: list[Action] = []
+        # 3. 平民：每人跑一輪（生產一次 + 一張買賣單），先全部生產，再全部下單
+        production: list[Action] = []
+        trades: list[Action] = []
         for c in world.living():
-            proposed = self.citizens[c.id].decide(self.observe(c.id)) or []
-            action = proposed[0] if proposed else Action(c.id, ActionType.IDLE, {}, "沒有提出行動")
-            action.agent_id = c.id  # 平民不能替別人行動
-            actions.append(action)
-            if len(proposed) > 1:
+            proposed = list(self.citizens[c.id].decide(self.observe(c.id)) or [])
+            made, trade, extra = rules.plan_day(c.id, proposed)
+            if made is None and trade is None:
+                events.append(rules.settle(world, Action(c.id, ActionType.IDLE, {}, _idle_reason(proposed)),
+                                           self.config.citizens, self.rng))
+            production += [made] if made else []
+            trades += [trade] if trade else []
+            if extra:
                 events.append(Event(world.tick, "action:extra", c.id, False,
-                                    {"dropped": len(proposed) - 1}, "一天只能做一個動作"))
-        self.rng.shuffle(actions)
-        for action in actions:
-            error = rules.validate(world, action)
-            if error:
-                events.append(Event(world.tick, f"action:{action.type.value}", action.agent_id, False,
-                                    {"params": action.params}, error))
-            else:
-                events.append(rules.settle(world, action, self.config.citizens, self.rng))
+                                    {"dropped": [a.type.value for a in extra]},
+                                    "一天最多生產一次、下一張買賣單"))
+        for batch in (production, trades):
+            self.rng.shuffle(batch)
+            for action in batch:
+                error = rules.validate(world, action)
+                if error:
+                    events.append(Event(world.tick, f"action:{action.type.value}", action.agent_id, False,
+                                        {"params": action.params}, error))
+                else:
+                    events.append(rules.settle(world, action, self.config.citizens, self.rng))
 
         # 4. 市場
         clearing, trade_events = settle_market(world, self.rng)
@@ -275,7 +283,23 @@ class SimulationEngine:
         cfg = self.config.government
         if self.government is None or not cfg.memory:
             return []
-        return self._apply_memory(self.government.reflect(report, self.memory))
+        new = self.government.reflect(report, self.memory)
+        self._record_llm_calls()
+        error = getattr(self.government, "last_reflect_error", None)
+        if new is None and error:  # 反思失敗和「LLM 決定不改」要分開記錄
+            return [Event(self.world.tick, "gov:memory_failed", GOV_ID, False, {"error": error},
+                          "反思失敗，維持舊版記憶")]
+        return self._apply_memory(new)
+
+    def _record_llm_calls(self) -> None:
+        """把政府新的 LLM 呼叫紀錄寫進 recorder（llm_calls.jsonl）。沒有呼叫紀錄的政府（例如 NoGovernment）就跳過。"""
+        calls = getattr(self.government, "calls", None)
+        record = getattr(self.recorder, "record_llm_call", None)  # 舊的 recorder 沒有這個方法就不寫
+        if not calls or record is None:
+            return
+        for call in calls[self._llm_calls_recorded:]:
+            record(asdict(call))
+        self._llm_calls_recorded = len(calls)
 
     def _apply_memory(self, new) -> list[Event]:
         """引擎只檢查記憶的長度與格式，不審查內容；每個版本都保存。"""
@@ -305,3 +329,8 @@ class SimulationEngine:
             "memory_versions": len(self.memory_versions),
             "schedule": [asdict(d) for d in self.schedule],
         }
+
+
+def _idle_reason(proposed: list[Action]) -> str:
+    idle = next((a for a in proposed if a.type == ActionType.IDLE), None)
+    return idle.reason if idle else "沒有提出行動"

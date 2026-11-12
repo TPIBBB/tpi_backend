@@ -192,3 +192,62 @@ def test_make_government_without_provider_fails_loudly(monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     with pytest.raises(ValueError):
         make_government()
+
+
+# ---- 沒變化就不呼叫（call_policy="on_change"）----
+def counting_government(**options):
+    seen = []
+
+    def respond(system, user):
+        seen.append(user)
+        return IDLE
+    return LLMGovernment(ScriptedClient(respond), call_policy="on_change", **options), seen
+
+
+def test_on_change_skips_when_nothing_changed_and_reuses_decision():
+    gov, seen = counting_government()
+    first = gov.decide(make_obs(tick=1, hungry=3))
+    again = gov.decide(make_obs(tick=2, prices={"food": 5.1}, hungry=4))  # 價格差 2%、挨餓多 1 人
+    assert len(seen) == 1 and again == first
+    assert not gov.calls[-1].used_llm and "第 1 天" in gov.calls[-1].trigger
+
+
+@pytest.mark.parametrize("change", [
+    {"prices": {"food": 6.0}},  # 價格變 20%
+    {"hungry": 10},  # 挨餓多很多
+    {"deaths": 1},
+    {"memory": "# 新記憶"},
+    {"recent_decisions": [{"tick": 1, "type": "idle", "params": {}, "accepted": False}]},  # 昨天被拒絕
+])
+def test_on_change_calls_when_something_changed(change):
+    gov, seen = counting_government()
+    gov.decide(make_obs(tick=1, hungry=3))
+    gov.decide(make_obs(**{"tick": 2, "hungry": 3, **change}))
+    assert len(seen) == 2
+
+
+def test_on_change_calls_at_least_every_max_skip_days():
+    gov, seen = counting_government(max_skip_days=2)
+    for tick in range(1, 8):
+        gov.decide(make_obs(tick=tick))
+    assert len(seen) == 3  # 第 1、4、7 天
+
+
+def test_on_change_calls_again_after_reflection_and_failure():
+    gov, seen = counting_government()
+    gov.decide(make_obs(tick=1))
+    gov.reflect(REPORT, "舊記憶")  # 回應不是 memory，反思失敗也一樣要重新呼叫
+    gov.decide(make_obs(tick=2))
+    assert sum("current_memory" not in u for u in seen) == 2
+
+
+def test_always_policy_calls_every_day():
+    gov = LLMGovernment(ScriptedClient([IDLE, IDLE]))
+    gov.decide(make_obs(tick=1))
+    gov.decide(make_obs(tick=2))
+    assert all(c.used_llm for c in gov.calls)
+
+
+def test_unknown_call_policy_fails():
+    with pytest.raises(ValueError):
+        LLMGovernment(ScriptedClient([]), call_policy="sometimes")

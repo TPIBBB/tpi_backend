@@ -18,11 +18,11 @@ def make(type_: CitizenType, **state):
     return world, c, RuleBasedCitizen(c.id, random.Random(0), config)
 
 
-def decide(world, c, agent):
+def decide(world, c, agent, price_cap=None):
     from civsim.models import Observation
 
     m = world.market
-    return agent.decide(Observation(world.tick, c, m.price, m.customary_price, None, []))
+    return agent.decide(Observation(world.tick, c, m.price, m.customary_price, price_cap, []))
 
 
 def test_initial_world_matches_population():
@@ -33,21 +33,63 @@ def test_initial_world_matches_population():
     assert defiant == round(config.n_citizens * config.citizens.noncompliance_rate)
 
 
-def test_consumer_buys_when_low_and_works_otherwise():
+def types(actions):
+    return [a.type for a in actions]
+
+
+def test_consumer_works_and_buys_on_the_same_day_when_low():
     world, c, agent = make(CitizenType.CONSUMER, food=0.5, money=100)
-    [a] = decide(world, c, agent)
-    assert a.type == ActionType.BUY and rules.validate(world, a) is None
-    assert a.params["price"] > world.market.customary_price  # 快沒糧了願意多付
+    work, buy = decide(world, c, agent)
+    assert work.type == ActionType.WORK and buy.type == ActionType.BUY
+    assert rules.validate(world, buy) is None
+    assert buy.params["price"] > world.market.customary_price  # 快沒糧了願意多付
     world, c, agent = make(CitizenType.CONSUMER, food=50, money=100)
-    assert decide(world, c, agent)[0].type == ActionType.WORK
+    assert types(decide(world, c, agent)) == [ActionType.WORK]
 
 
-def test_farmer_sells_surplus_and_harvests_otherwise():
+def test_farmer_harvests_and_sells_on_the_same_day():
+    world, c, agent = make(CitizenType.PRODUCER_TRADER, food=8)
+    c.persona = replace(c.persona, risk_tolerance=0.5, gluttony=0.0)  # 安全存量 4 天：多 4 單位可賣，又不到 12 天
+    harvest, sell = decide(world, c, agent)
+    assert harvest.type == ActionType.HARVEST and sell.type == ActionType.SELL
+    assert rules.validate(world, sell) is None
+    world, c, agent = make(CitizenType.PRODUCER_TRADER, food=40)  # 存糧很多：不收成，只賣
+    assert types(decide(world, c, agent)) == [ActionType.SELL]
+    world, c, agent = make(CitizenType.PRODUCER_TRADER, food=0, money=30)  # 存糧不夠：收成，也買糧
+    harvest, buy = decide(world, c, agent)
+    assert harvest.type == ActionType.HARVEST and buy.type == ActionType.BUY
+    assert rules.validate(world, buy) is None
+
+
+def test_defiant_farmer_hoards_under_price_cap():
     world, c, agent = make(CitizenType.PRODUCER_TRADER, food=40)
-    [a] = decide(world, c, agent)
-    assert a.type == ActionType.SELL and rules.validate(world, a) is None
-    world, c, agent = make(CitizenType.PRODUCER_TRADER, food=0)
-    assert decide(world, c, agent)[0].type == ActionType.HARVEST
+    c.persona = replace(c.persona, complies=False)
+    assert ActionType.SELL not in types(decide(world, c, agent, price_cap=3.0))  # 不服從：囤糧觀望
+    assert types(decide(world, c, agent)) == [ActionType.SELL]  # 沒有價格上限就照常賣
+    c.persona = replace(c.persona, complies=True)
+    assert types(decide(world, c, agent, price_cap=3.0)) == [ActionType.SELL]  # 服從的人照常賣
+
+
+def test_consumer_never_sells():
+    world, c, agent = make(CitizenType.CONSUMER, food=100, money=100)
+    assert ActionType.SELL not in types(decide(world, c, agent))
+
+
+def test_lazy_citizen_skips_production_but_still_trades():
+    world, c, agent = make(CitizenType.CONSUMER, food=0.5, money=100)
+    c.persona = replace(c.persona, sloth=1.0)
+    assert types(decide(world, c, agent)) == [ActionType.BUY]
+    world, c, agent = make(CitizenType.PRODUCER_SELF, food=50)
+    assert types(decide(world, c, agent)) == [ActionType.IDLE]  # 存糧夠多，什麼都不做
+
+
+def test_plan_day_keeps_one_production_and_one_trade():
+    a = lambda t: Action("someone_else", t, {})  # noqa: E731
+    made, trade, extra = rules.plan_day("c01", [a(ActionType.IDLE), a(ActionType.SELL), a(ActionType.HARVEST),
+                                                a(ActionType.BUY), a(ActionType.WORK)])
+    assert made.type == ActionType.HARVEST and trade.type == ActionType.SELL
+    assert types(extra) == [ActionType.BUY, ActionType.WORK]
+    assert made.agent_id == trade.agent_id == "c01"  # 平民不能替別人行動
 
 
 def test_types_limit_actions():

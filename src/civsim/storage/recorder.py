@@ -18,6 +18,7 @@ class Recorder(Protocol):
     def record_tick(self, world: WorldState, events: list[Event], metrics: dict) -> None: ...
     def record_disaster(self, report: dict) -> None: ...
     def record_memory(self, version: int, text: str) -> None: ...
+    def record_llm_call(self, call: dict) -> None: ...
     def close(self) -> None: ...
 
 
@@ -31,13 +32,17 @@ class NullRecorder:
     def record_memory(self, version: int, text: str) -> None:
         pass
 
+    def record_llm_call(self, call: dict) -> None:
+        pass
+
     def close(self) -> None:
         pass
 
 
 class JsonlRecorder:
     """每回合寫一行：events.jsonl / metrics.jsonl / citizens.jsonl；
-    每次天災寫一行 disasters.jsonl；每個記憶版本寫一行 memory.jsonl。"""
+    每次天災寫一行 disasters.jsonl；每個記憶版本寫一行 memory.jsonl；
+    每次呼叫 LLM（政府決策、反思）寫一行 llm_calls.jsonl：prompt、回應、錯誤、token 用量。"""
 
     def __init__(self, out_dir: str | Path, meta: dict | None = None):
         self.out_dir = Path(out_dir)
@@ -48,7 +53,7 @@ class JsonlRecorder:
             )
         self._files = {
             name: (self.out_dir / f"{name}.jsonl").open("w", encoding="utf-8")
-            for name in ("events", "metrics", "citizens", "disasters", "memory")
+            for name in ("events", "metrics", "citizens", "disasters", "memory", "llm_calls")
         }
 
     def _write(self, name: str, row: dict) -> None:
@@ -70,6 +75,10 @@ class JsonlRecorder:
     def record_memory(self, version: int, text: str) -> None:
         self._write("memory", {"version": version, "text": text})
 
+    def record_llm_call(self, call: dict) -> None:
+        self._write("llm_calls", call)
+        self._files["llm_calls"].flush()  # 模擬中途當掉時，已經花掉的呼叫也查得到
+
     def close(self) -> None:
         for f in self._files.values():
             f.close()
@@ -88,5 +97,7 @@ class PostgresRecorder:
     def record_disaster(self, report: dict) -> None: ...
 
     def record_memory(self, version: int, text: str) -> None: ...
+
+    def record_llm_call(self, call: dict) -> None: ...
 
     def close(self) -> None: ...

@@ -1,13 +1,15 @@
 """平民行動的驗證與結算。Agent 說什麼都不算數，只有通過這裡的行動才會改變世界。
 
-一天每位平民只能做一個動作，能做哪些動作由平民的類型決定：
+一天 = 每位平民跑完一輪：依類型，同一天可以生產一次，也可以下一張買單或賣單，兩者不用擇一。
 
-| 類型 | 可以做的動作 |
-|---|---|
-| producer_trader（有產出、有買賣） | harvest、buy、sell、idle |
-| producer_self（有產出、沒買賣） | harvest、idle |
-| consumer（沒產出、有買賣） | work、buy、sell、idle |
-| dependent（沒產出、沒買賣） | idle |
+| 類型 | 生產（每天最多一次） | 買賣（每天最多一張單） |
+|---|---|---|
+| producer_trader（有產出、有買賣） | harvest | buy 或 sell |
+| producer_self（有產出、沒買賣） | harvest | — |
+| consumer（沒產出、有買賣） | work | buy 或 sell |
+| dependent（沒產出、沒買賣） | — | — |
+
+什麼都不做就是 idle。結算順序是先生產、再下單，所以當天收成的糧可以當天賣。
 """
 
 from __future__ import annotations
@@ -18,6 +20,30 @@ import random
 from civsim.config import CitizenConfig
 from civsim.models import Action, ActionType, Citizen, Event, Order, WorldState
 from civsim.world.market import place_order
+
+
+PRODUCTION_ACTIONS = frozenset({ActionType.HARVEST, ActionType.WORK})
+TRADE_ACTIONS = frozenset({ActionType.BUY, ActionType.SELL})
+
+
+def plan_day(citizen_id: str, proposed: list[Action]) -> tuple[Action | None, Action | None, list[Action]]:
+    """把平民提出的行動分成（生產, 買賣, 多出來的）。每一類只取第一個，idle 直接忽略。
+
+    這裡只分類，不檢查類型能不能做；能不能做由 validate 判斷，被拒絕的會留下紀錄。
+    """
+    production = trade = None
+    extra: list[Action] = []
+    for action in proposed:
+        action.agent_id = citizen_id  # 平民不能替別人行動
+        if action.type == ActionType.IDLE:
+            continue
+        if action.type in PRODUCTION_ACTIONS and production is None:
+            production = action
+        elif action.type in TRADE_ACTIONS and trade is None:
+            trade = action
+        else:
+            extra.append(action)
+    return production, trade, extra
 
 
 def allowed_actions(citizen: Citizen) -> set[ActionType]:
