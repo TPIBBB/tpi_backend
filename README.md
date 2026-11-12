@@ -6,7 +6,7 @@
 此 repo 是僅負責後端(模擬引擎、Agent、world-api等) 。前端介面在：
 [tpi_frontend](https://github.com/TPIBBB/tpi_frontend)。
 
-# 研究問題(目標)
+# 研究問題(目標
 
 每次天災結束後，在固定的天數（評估期）內，價格能否恢復到市場均衡價格？經歷多次天災後，這個結果會如何變化?
 
