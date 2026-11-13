@@ -77,6 +77,32 @@ def test_make_client_gemini_reads_env(monkeypatch):
     assert client.model == DEFAULT_GEMINI_MODEL and client.seed == 3 and client.temperature == 0
 
 
+def test_make_client_vertex_uses_gcp_project(monkeypatch):
+    pytest.importorskip("google.genai")
+    monkeypatch.setenv("LLM_PROVIDER", "vertex")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "my-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.setenv("LLM_API_KEY", "modal-key-left-over")  # 有 project 時不用 API key
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    created = {}
+
+    def fake_client(**kwargs):
+        created.update(kwargs)
+        return SimpleNamespace(models=FakeModels())
+
+    monkeypatch.setattr("google.genai.Client", fake_client)
+    client = make_client()
+    assert client.provider == "vertex" and client.model == DEFAULT_GEMINI_MODEL
+    assert created["vertexai"] and created["project"] == "my-project"
+    assert created["location"] == "us-central1" and "api_key" not in created
+
+
+def test_vertex_without_project_or_key_fails():
+    pytest.importorskip("google.genai")
+    with pytest.raises(ValueError, match="GOOGLE_CLOUD_PROJECT"):
+        GeminiClient(vertex=True)
+
+
 def test_make_client_rejects_unknown_provider(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "unknown")
     with pytest.raises(ValueError, match="unknown"):
@@ -184,3 +210,20 @@ def test_openai_compatible_non_json_response_is_llm_error():
                                     transport=httpx.MockTransport(lambda r: httpx.Response(200, text="")))
     with pytest.raises(LLMError, match="不是 JSON"):
         client.complete("s", "u")
+
+
+def test_openai_compatible_gives_up_when_server_never_starts():
+    httpx = pytest.importorskip("httpx")
+    from civsim.agents.llm_client import OpenAICompatibleClient
+
+    calls = []
+
+    def handler(request):  # Modal 的伺服器一直沒啟動：每次都回 303
+        calls.append(request)
+        return httpx.Response(303, headers={"location": f"https://x.modal.run/v1/chat/completions?t={len(calls)}"})
+
+    client = OpenAICompatibleClient(model="qwen", base_url="https://x.modal.run/v1",
+                                    transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMError, match="Modal 的 Logs"):
+        client.complete("s", "u")
+    assert len(calls) == 7  # 第一次 + 6 次轉址，不會重試好幾輪

@@ -1,13 +1,15 @@
 """LLM 供應商與共用工具。負責人：Agent。
 
 所有 LLM 呼叫都經過有 complete(system, user) -> str 的 LLMClient：
-- GeminiClient：呼叫 Google Gemini API（免費版每天只有少量呼叫次數）
+- GeminiClient：呼叫 Google Gemini API（免費版每天只有少量呼叫次數），或 GCP 上的 Vertex AI（付費、沒有每日上限）
 - OpenAICompatibleClient：呼叫 OpenAI 相容 API，例如 Modal 上自己架的 vLLM（modal/llm_server.py）或本機 Ollama
 - ScriptedClient：不連網的假 LLM，給測試與流程演練用
 
 環境變數（可寫在專案根目錄的 .env，由 cli 讀入）：
-- LLM_PROVIDER：gemini | modal（= openai_compatible）| ollama；留空表示不使用 LLM
-- LLM_MODEL：模型 ID；gemini 預設 DEFAULT_GEMINI_MODEL，其他要填伺服器上的模型名稱。正式實驗前要鎖定
+- LLM_PROVIDER：gemini | vertex | modal（= openai_compatible）| ollama；留空表示不使用 LLM
+- LLM_MODEL：模型 ID；gemini、vertex 預設 DEFAULT_GEMINI_MODEL，其他要填伺服器上的模型名稱。正式實驗前要鎖定
+- GOOGLE_CLOUD_PROJECT：vertex 用的 GCP 專案 ID；登入方式是先執行 gcloud auth application-default login
+- GOOGLE_CLOUD_LOCATION：vertex 的區域，預設 global
 - LLM_BASE_URL：OpenAI 相容 API 的網址（到 /v1 為止）；ollama 預設 http://localhost:11434/v1
 - LLM_API_KEY（或 GEMINI_API_KEY）：Gemini API key，或 Modal 伺服器的金鑰
 - LLM_TEMPERATURE：預設 0，讓結果盡量可重現
@@ -26,6 +28,7 @@ from typing import Any, Callable, Protocol
 
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"  # Gemini 文件標示為 Stable 的 Flash 模型
 RETRY_STATUS_CODES = (408, 429, 500, 502, 503, 504)  # 逾時、額度、伺服器錯誤才重試
+MAX_REDIRECTS = 6  # Modal 每 150 秒轉址一次：最多等約 15 分鐘
 
 
 class ParseError(ValueError):
@@ -107,12 +110,13 @@ class GeminiClient:
     由呼叫端（例如 LLMGovernment）記錄並改用 fallback。
     """
 
-    provider = "gemini"
-
     def __init__(
         self,
         model: str = DEFAULT_GEMINI_MODEL,
         api_key: str | None = None,
+        vertex: bool = False,  # True：走 GCP 的 Vertex AI，用 project + gcloud 登入，或 Vertex 的 API key
+        project: str | None = None,
+        location: str | None = None,
         temperature: float = 0.0,
         seed: int | None = None,
         timeout_s: float = 60.0,
@@ -121,25 +125,38 @@ class GeminiClient:
         client: Any = None,  # 測試時可傳入假的 SDK client
     ):
         self.model = model
+        self.provider = "vertex" if vertex else "gemini"
         self.temperature = temperature
         self.seed = seed
         self.json_mode = json_mode
         self.last_usage: dict[str, int] | None = None
         if client is None:
-            client = self._make_sdk_client(api_key, timeout_s, attempts)
+            client = self._make_sdk_client(api_key, vertex, project, location, timeout_s, attempts)
         self._client = client
 
     @staticmethod
-    def _make_sdk_client(api_key: str | None, timeout_s: float, attempts: int) -> Any:
+    def _make_sdk_client(
+        api_key: str | None, vertex: bool, project: str | None, location: str | None,
+        timeout_s: float, attempts: int,
+    ) -> Any:
         try:
             from google import genai
             from google.genai import types
         except ImportError as e:
             raise ImportError('尚未安裝 Gemini SDK，請執行 pip install -e ".[llm]"') from e
-        if not api_key:
+        if vertex and project:
+            # 用 gcloud auth application-default login 的登入資訊，費用算在這個 GCP 專案
+            auth: dict[str, Any] = {"vertexai": True, "project": project, "location": location or "global"}
+        elif vertex and api_key:
+            auth = {"vertexai": True, "api_key": api_key}  # Vertex AI 的 API key（express mode）
+        elif vertex:
+            raise ValueError("Vertex AI 要設定 GOOGLE_CLOUD_PROJECT（GCP 專案 ID），或 Vertex 的 API key（LLM_API_KEY）")
+        elif api_key:
+            auth = {"api_key": api_key}
+        else:
             raise ValueError("尚未設定 Gemini API key（LLM_API_KEY 或 GEMINI_API_KEY）")
         return genai.Client(
-            api_key=api_key,
+            **auth,
             http_options=types.HttpOptions(
                 timeout=int(timeout_s * 1000),  # SDK 的單位是毫秒
                 retry_options=types.HttpRetryOptions(
@@ -179,7 +196,7 @@ class OpenAICompatibleClient:
         api_key: str | None = None,
         temperature: float = 0.0,
         seed: int | None = None,
-        timeout_s: float = 600.0,  # Modal 冷啟動（開機 + 載入模型）要等好幾分鐘
+        timeout_s: float = 300.0,  # 單次連線最多等多久；Modal 每 150 秒會轉址一次
         attempts: int = 4,
         json_mode: bool = True,
         transport: Any = None,  # 測試時可傳入 httpx.MockTransport
@@ -200,9 +217,10 @@ class OpenAICompatibleClient:
         self.json_mode = json_mode
         self.last_usage: dict[str, int] | None = None
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        # Modal 的請求超過 150 秒（例如冷啟動）會回 303，要照 Location 去拿結果，所以要跟著轉址
+        # Modal 的請求超過 150 秒（例如冷啟動）會回 303，要照 Location 去拿結果，所以要跟著轉址。
+        # 每次轉址約 150 秒，最多 6 次，也就是一次請求最多等約 15 分鐘，伺服器起不來時不會一直卡住
         self._http = httpx.Client(headers=headers, timeout=timeout_s, transport=transport,
-                                  follow_redirects=True, max_redirects=30)
+                                  follow_redirects=True, max_redirects=MAX_REDIRECTS)
         self._sleep = time.sleep
 
     def complete(self, system: str, user: str) -> str:
@@ -224,6 +242,9 @@ class OpenAICompatibleClient:
                 self._sleep(min(2 ** attempt, 30))
             try:
                 r = self._http.post(f"{self.base_url}/chat/completions", json=body)
+            except httpx.TooManyRedirects:
+                raise LLMError(f"等了約 {MAX_REDIRECTS * 150 // 60} 分鐘伺服器還沒準備好，"
+                               "請看 Modal 的 Logs 確認模型有沒有啟動成功") from None
             except httpx.TransportError as e:  # 連不上、逾時
                 error = f"{type(e).__name__}: {e}"
                 continue
@@ -277,11 +298,16 @@ def make_client() -> LLMClient | None:
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
     if not provider:
         return None
-    if provider == "gemini":
+    if provider in ("gemini", "vertex"):
         seed = os.getenv("LLM_SEED", "").strip()
+        vertex = provider == "vertex"
         return GeminiClient(
             model=os.getenv("LLM_MODEL", "").strip() or DEFAULT_GEMINI_MODEL,
-            api_key=os.getenv("LLM_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip(),
+            api_key=os.getenv("LLM_API_KEY", "").strip()
+            or ("" if vertex else os.getenv("GEMINI_API_KEY", "").strip()),
+            vertex=vertex,
+            project=os.getenv("GOOGLE_CLOUD_PROJECT", "").strip() if vertex else None,
+            location=os.getenv("GOOGLE_CLOUD_LOCATION", "").strip() if vertex else None,
             temperature=float(os.getenv("LLM_TEMPERATURE", "0") or 0),
             seed=int(seed) if seed else None,
         )
@@ -295,7 +321,7 @@ def make_client() -> LLMClient | None:
             temperature=float(os.getenv("LLM_TEMPERATURE", "0") or 0),
             seed=int(seed) if seed else None,
         )
-    raise ValueError(f"未知的 LLM_PROVIDER：{provider}（目前支援 gemini、openai_compatible／modal、ollama）")
+    raise ValueError(f"未知的 LLM_PROVIDER：{provider}（目前支援 gemini、vertex、openai_compatible／modal、ollama）")
 
 
 def load_dotenv(path: str | Path = ".env") -> None:
