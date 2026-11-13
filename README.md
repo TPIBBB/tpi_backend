@@ -190,7 +190,7 @@ git push origin main
 ## 注意事項
 
 - **不要用 `git push --force`**：會把別人推上去的 commit 蓋掉。
-- **push 前先跑測試**：執行 `python -m pytest`，推上去後 CI 也會再檢查一次。
+- **push 前先跑測試**：執行 `uv run pytest`（用 pip 的人執行 `pytest`），推上去後 CI 也會再檢查一次。
 
 # CI（自動測試）
 
@@ -224,8 +224,8 @@ CI 會在 GitHub 上自動安裝專案並跑測試，確認推上去的程式能
 
 1. 到 Actions 分頁找出是哪一步失敗。
 2. 依失敗的步驟處理：
-   - **安裝依賴失敗**：在自己電腦執行 `uv lock`，把更新後的 `uv.lock` 一起 commit。
-   - **測試失敗**：在自己電腦執行 `python -m pytest`，修到通過再 push。如果是因為重寫模組，舊測試已經不適用，就一起刪掉或改寫對應的測試。
+   - **安裝依賴失敗**：照[要新增或升級套件時](#要新增或升級套件時)的步驟，更新 `uv.lock` 和 `requirements.txt` 後一起 commit。
+   - **測試失敗**：在自己電腦執行 `uv run pytest`（用 pip 的人執行 `pytest`），修到通過再 push。如果是因為重寫模組，舊測試已經不適用，就一起刪掉或改寫對應的測試。
 3. 修好後再 push 一次，CI 會自動重跑。
 
 如果懷疑只是 GitHub 暫時出錯，可以在失敗的那次執行頁面按 **Re-run jobs** 重跑。
@@ -245,33 +245,83 @@ uv run --locked pytest
 
 CI 失敗時請先修好，不要放著繼續推新的修改，否則之後很難判斷是哪次修改造成的問題。
 
-## 快速開始
+# 環境安裝與快速開始
 
-需要 Python 3.11+。目前預設沒有政府（`government.controller: none`），LLM 政府等 Agent 組串接供應商後即可使用。
+需要 Python 3.11+（CI 用 3.12，見 `.python-version`）。uv 和 pip 擇一使用即可，兩邊會裝到**完全相同的套件版本**：
+`requirements.txt` 是從 `uv.lock` 產生的，版本一一對應。
+
+## 用 uv 的人
 
 ```bash
-pip install -e ".[api,dev]"
+# 安裝（第一次、或 pull 到別人改的依賴之後）
+uv sync --all-extras
 
 # 單次模擬（紀錄寫到 runs/）
-python -m civsim run --config configs/baseline.yaml
+uv run civsim run --config configs/baseline.yaml
 
 # 批次實驗：重複 5 個 seed，輸出每次天災的結果 summary.csv
-python -m civsim experiment configs/baseline.yaml --repeats 5
+uv run civsim experiment configs/baseline.yaml --repeats 5
 
 # 測試
-python -m pytest
+uv run pytest
 ```
 
-### 經由 API 執行
+不用自己建 venv，`uv sync` 會在專案裡建立 `.venv`，`uv run` 會自動使用它。
+
+## 用 pip 的人
+
+```powershell
+# 第一次：建立並啟用虛擬環境（Windows）
+python -m venv .venv
+.venv\Scripts\activate
+# macOS / Linux 改用：source .venv/bin/activate
+
+# 安裝（第一次、或 pull 到別人改的依賴之後）
+pip install -r requirements.txt
+
+# 之後每次開新終端機都要先啟用 .venv，再執行指令
+civsim run --config configs/baseline.yaml
+civsim experiment configs/baseline.yaml --repeats 5
+pytest
+```
+
+不要只執行 `pip install -e .`，也不要自己 `pip install <套件>`，那樣會裝到跟其他人不同的版本。`requirements.txt` 第一行已經包含 `-e .`，會一起裝好專案本身。
+
+## 指令對照
+
+下面的文件統一寫成 `civsim ...`。用 uv 的人在前面加 `uv run`；用 pip 的人先啟用 `.venv`，再直接執行。
+
+| 要做的事 | uv | pip（已啟用 `.venv`） |
+|---|---|---|
+| 安裝／更新套件 | `uv sync --all-extras` | `pip install -r requirements.txt` |
+| 執行模擬 | `uv run civsim ...` | `civsim ...` |
+| 跑測試 | `uv run pytest` | `pytest` |
+| 檢查 LLM 連線 | `uv run civsim llm-check` | `civsim llm-check` |
+
+## 要新增或升級套件時
+
+依賴統一由**用 uv 的人**更新，用 pip 的人請在群組說要加什麼套件。不然 `uv.lock`、`requirements.txt` 跟 `pyproject.toml` 會對不起來，CI 也會失敗。
+
+1. 在 `pyproject.toml` 的 `dependencies` 或 `[project.optional-dependencies]` 加上套件。
+2. 更新鎖定檔，並重新產生 `requirements.txt`：
+   ```bash
+   uv lock
+   uv export --all-extras --no-hashes -o requirements.txt
+   uv sync --all-extras
+   ```
+3. 把 `pyproject.toml`、`uv.lock`、`requirements.txt` **三個檔案一起 commit**。
+4. 在群組通知大家 pull，然後重新執行上面的安裝指令。
+
+## 經由 API 執行
 
 需要兩個終端機：
 
 ```bash
 # 終端機 A：啟動 world-api，會印出這次的 run_id；互動式文件在 http://localhost:8000/docs
-python -m civsim serve --config configs/baseline.yaml
+civsim serve --config configs/baseline.yaml
 
 # 終端機 B：扮演政府，經 HTTP 把整個 run 跑完（預設是每天都不行動的政府，用來測試連線）
-python -m civsim govern
+civsim govern
 ```
 
 政府的路徑採用 lockstep：政府每送一次決策，世界就前進一天；每次天災結束會停下來等政府反思。

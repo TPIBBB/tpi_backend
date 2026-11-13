@@ -38,7 +38,7 @@ class HttpWorldClient:
         max_retries：失敗後最多再試幾次；第 n 次重試前等 backoff × 2^(n-1) 秒。
         run_id：不給就用 world-api 目前唯一的 run。
         """
-        import httpx  # 選用相依：pip install -e ".[api]"
+        import httpx  # 選用相依：uv sync --extra api
 
         self._httpx = httpx
         base_url = (base_url or os.getenv("DIGIRUNNER_BASE_URL", "http://localhost:8000")).rstrip("/")

@@ -2,7 +2,7 @@
 
 所有 LLM 呼叫都經過有 complete(system, user) -> str 的 LLMClient：
 - GeminiClient：呼叫 Google Gemini API（免費版每天只有少量呼叫次數）
-- OpenAICompatibleClient：呼叫 OpenAI 相容 API，例如 Modal 上自己架的 vLLM（modal/llm_server.py）或本機 Ollama
+- OpenAICompatibleClient：呼叫 OpenAI 相容 API，例如 Modal 上自己架的 vLLM（deploy/modal_llm.py）或本機 Ollama
 - ScriptedClient：不連網的假 LLM，給測試與流程演練用
 
 環境變數（可寫在專案根目錄的 .env，由 cli 讀入）：
@@ -135,7 +135,7 @@ class GeminiClient:
             from google import genai
             from google.genai import types
         except ImportError as e:
-            raise ImportError('尚未安裝 Gemini SDK，請執行 pip install -e ".[llm]"') from e
+            raise ImportError('尚未安裝 Gemini SDK，請執行 uv sync --extra llm') from e
         if not api_key:
             raise ValueError("尚未設定 Gemini API key（LLM_API_KEY 或 GEMINI_API_KEY）")
         return genai.Client(
@@ -164,7 +164,7 @@ class GeminiClient:
 
 
 class OpenAICompatibleClient:
-    """呼叫 OpenAI 相容的 Chat Completions API：Modal 上的 vLLM（modal/llm_server.py）、Ollama 等。
+    """呼叫 OpenAI 相容的 Chat Completions API：Modal 上的 vLLM（deploy/modal_llm.py）、Ollama 等。
 
     base_url 指到 /v1 為止，例如 https://xxx.modal.run/v1 或 http://localhost:11434/v1。
     遇到逾時、限流與伺服器錯誤會等一下再重試；重試後仍失敗會丟出 LLMError，由 LLMGovernment 改用 fallback。
@@ -187,7 +187,7 @@ class OpenAICompatibleClient:
         try:
             import httpx
         except ImportError as e:
-            raise ImportError('尚未安裝 httpx，請執行 pip install -e ".[llm]"') from e
+            raise ImportError('尚未安裝 httpx，請執行 uv sync --extra llm') from e
         if not model:
             raise ValueError("OpenAI 相容模式要設定 LLM_MODEL（伺服器上的模型名稱）")
         if not base_url:
