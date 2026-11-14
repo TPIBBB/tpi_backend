@@ -298,6 +298,8 @@ pytest
 | 跑測試 | `uv run pytest` | `pytest` |
 | 檢查 LLM 連線 | `uv run civsim llm-check` | `civsim llm-check` |
 
+要用 LLM 政府跑實驗，先照 [docs/modal_setup.md](docs/modal_setup.md) 用自己的 Modal 帳號部署模型、填好 `.env`。
+
 ## 要新增或升級套件時
 
 依賴統一由**用 uv 的人**更新，用 pip 的人請在群組說要加什麼套件。不然 `uv.lock`、`requirements.txt` 跟 `pyproject.toml` 會對不起來，CI 也會失敗。
