@@ -39,6 +39,28 @@ class EquilibriumBand:
         return asdict(self)
 
 
+def is_market_price(m: dict) -> bool:
+    """這天記錄的價格是不是市場自然形成的成交價。m 是每日指標（analysis/metrics.py）。
+
+    以下兩種日子的價格都不算：
+    - 沒有實際成交：價格是沿用前一天、或依買賣報價推出來的
+    - 被政府的價格上限壓住：價格是政府壓出來的
+
+    校準期（只用這些日子算均衡區間）和評估期（這些日子不算在區間內）都用這個判斷，
+    改規則時只要改這裡。
+    """
+    return bool(m["traded"]) and not m["price_capped"]
+
+
+def counts_in_band(band: EquilibriumBand, m: dict) -> bool:
+    """這天算不算在均衡區間內：價格是市場成交價，而且落在區間裡。
+
+    天災報告的成功判定（analysis/goals.py）和每日指標的 in_band（world/engine.py）都用這個判斷，
+    兩邊的結果才會一致。
+    """
+    return is_market_price(m) and band.contains(m["price"])
+
+
 def band_from_prices(prices: list[float], k: float, min_half_width: float = 0.0) -> EquilibriumBand:
     if not prices:
         raise ValueError("沒有價格資料，無法計算均衡區間")
@@ -86,11 +108,8 @@ def calibrate(config: SimConfig) -> tuple[EquilibriumBand, list[float]]:
     # 3. 去掉前面的收斂期
     stable_history = history[eq.burn_in_days:]
 
-    # 4. 只取有實際成交的日期
-    traded_rows = [
-        m for m in stable_history
-        if m["traded"] and not m["price_capped"]
-    ]
+    # 4. 只取有實際成交、沒被價格上限壓住的日期
+    traded_rows = [m for m in stable_history if is_market_price(m)]
 
     traded_prices = [
         float(m["price"]) for m in traded_rows

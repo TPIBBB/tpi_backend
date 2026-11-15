@@ -30,7 +30,7 @@ from civsim.models import FOOD, GOV_ID, Action, ActionType, Event, Observation, 
 from civsim.storage.recorder import NullRecorder, Recorder
 from civsim.world import rules
 from civsim.world.disasters import Disaster, begin_tick_events, build_schedule, disaster_at
-from civsim.world.equilibrium import EquilibriumBand, calibrate
+from civsim.world.equilibrium import EquilibriumBand, calibrate, counts_in_band
 from civsim.world.government import GovernmentDecision, GovernmentObservation, settle, validate
 from civsim.world.market import settle_market
 from civsim.world.setup import create_world
@@ -203,8 +203,8 @@ class SimulationEngine:
         # 6. 記錄
         metrics = snapshot_metrics(world, clearing, events, day=world.tick - self._cycle_start_tick())
         if self.band is not None:
-            # 和 analysis/goals.py 的判定一致：沒成交、被上限壓住的日子都不算在區間內
-            metrics["in_band"] = self.band.contains(clearing.price) and clearing.traded and not clearing.capped
+            # 和 analysis/goals.py 的成功判定用同一個函式，兩邊的結果才會一致
+            metrics["in_band"] = counts_in_band(self.band, metrics)
         self.history.append(metrics)
         self.cycle_history.append(metrics)
 
