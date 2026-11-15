@@ -203,7 +203,8 @@ class SimulationEngine:
         # 6. 記錄
         metrics = snapshot_metrics(world, clearing, events, day=world.tick - self._cycle_start_tick())
         if self.band is not None:
-            metrics["in_band"] = self.band.contains(clearing.price) and not clearing.capped
+            # 和 analysis/goals.py 的判定一致：沒成交、被上限壓住的日子都不算在區間內
+            metrics["in_band"] = self.band.contains(clearing.price) and clearing.traded and not clearing.capped
         self.history.append(metrics)
         self.cycle_history.append(metrics)
 

@@ -4,6 +4,8 @@
 - 均衡價格是一個區間（world/equilibrium.py）
 - 評估期內價格進入區間後要一直維持到評估期結束才算成功，中途跑出區間就算失敗
 - 價格被政府的上限壓住的那幾天，不算在區間內
+- 沒有實際成交的那幾天，也不算在區間內：那天記錄的價格是沿用前一天、或依買賣報價推出來的，
+  不是市場真的成交價；市場沒有成交，代表還沒恢復正常運作
 - 死亡與挨餓人數不影響判定，只記成輔助指標
 """
 
@@ -19,7 +21,7 @@ def evaluate_disaster(disaster, history: list[dict], band: EquilibriumBand,
     history 是這個天災週期每天的指標（analysis/metrics.py）；decisions 是這個週期政府的所有決策結果。
     """
     window = [m for m in history if disaster.end_tick < m["tick"] <= disaster.window_end]
-    in_band = [band.contains(m["price"]) and not m["price_capped"] for m in window]
+    in_band = [band.contains(m["price"]) and m["traded"] and not m["price_capped"] for m in window]
 
     entered = next((i for i, ok in enumerate(in_band) if ok), None)
     success = entered is not None and all(in_band[entered:])
@@ -37,6 +39,7 @@ def evaluate_disaster(disaster, history: list[dict], band: EquilibriumBand,
         "left_band_after_recovery": entered is not None and not success,
         "window_prices": [m["price"] for m in window],
         "capped_days": sum(1 for m in window if m["price_capped"]),
+        "no_trade_days": sum(1 for m in window if not m["traded"]),
         "peak_price": max((m["price"] for m in cycle), default=None),
         "hungry_person_days": sum(m["hungry"] for m in cycle),
         "deaths": cycle[-1]["deaths"] if cycle else 0,

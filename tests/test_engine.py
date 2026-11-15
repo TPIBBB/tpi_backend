@@ -144,16 +144,24 @@ def test_evaluate_requires_staying_in_band():
     d = build_schedule(DisasterConfig(count=1, stable_days=1, stable_jitter=0, disaster_days=1, evaluation_days=4))[0]
     band = band_from_prices([4.0, 6.0], k=1)  # 4 ~ 6
 
-    def history(prices, capped=()):
-        return [{"tick": t, "price": p, "price_capped": t in capped, "hungry": 0, "deaths": 0}
+    def history(prices, capped=(), no_trade=()):
+        return [{"tick": t, "price": p, "price_capped": t in capped, "traded": t not in no_trade,
+                 "hungry": 0, "deaths": 0}
                 for t, p in enumerate(prices)]
 
     ok = evaluate_disaster(d, history([5, 9, 8, 5, 5, 5]), band)
-    assert ok["success"] and ok["recovered_day"] == 2
+    assert ok["success"] and ok["recovered_day"] == 2 and ok["no_trade_days"] == 0
     left = evaluate_disaster(d, history([5, 9, 5, 9, 5, 5]), band)
     assert not left["success"] and left["left_band_after_recovery"]
     capped = evaluate_disaster(d, history([5, 9, 5, 5, 5, 5], capped={5}), band)
     assert not capped["success"]
+
+    # 沒成交的日子：價格看起來在區間內也不算
+    gap = evaluate_disaster(d, history([5, 9, 5, 5, 5, 5], no_trade={4}), band)
+    assert not gap["success"] and gap["left_band_after_recovery"] and gap["no_trade_days"] == 1
+    # 沒成交的日子不算回到區間：第一次有成交又在區間內的日子才是 recovered_day
+    late = evaluate_disaster(d, history([5, 9, 5, 5, 5, 5], no_trade={2}), band)
+    assert late["success"] and late["recovered_day"] == 2
     assert first_sustained([{"disaster_id": i, "success": s} for i, s in enumerate([True, False, True, True], 1)]) == 3
 
 

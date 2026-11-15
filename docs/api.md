@@ -257,6 +257,7 @@ lockstep 下，**每次 POST 都會讓世界前進一天**。如果政府 client
     "left_band_after_recovery": true,
     "window_prices": [11.2, 10.6, 9.9],
     "capped_days": 0,
+    "no_trade_days": 0,
     "peak_price": 14.2,
     "hungry_person_days": 63,
     "deaths": 0,
