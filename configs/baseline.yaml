@@ -9,7 +9,7 @@ citizens:
   noncompliance_rate: 0.3
 market:
   base_price: 5.0
-  anchor_weight: 0.5
+  anchor_weight: 0.2
 government:
   controller: none   # none | llm
   budget: 1000
@@ -19,7 +19,7 @@ government:
 disasters:
   count: 5
   stable_days: 20
-  disaster_days: 5
+  disaster_days: 8
   evaluation_days: 15
   food_multiplier: 0.2
 equilibrium:

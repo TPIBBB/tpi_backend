@@ -9,7 +9,7 @@ from civsim.analysis.goals import evaluate_disaster, first_sustained
 from civsim.config import DisasterConfig, SocialRuleConfig
 from civsim.world import SimulationEngine
 from civsim.world.disasters import build_schedule
-from civsim.world.equilibrium import band_from_prices
+from civsim.world.equilibrium import band_from_prices, calibrate
 from civsim.world.government import GovernmentActionType as T
 from civsim.world.government import GovernmentDecision
 
@@ -64,6 +64,38 @@ def test_band_is_same_for_every_government(small_config):
 def test_band_min_width():
     band = band_from_prices([5.0, 5.0, 5.0], k=2.5, min_half_width=0.02)
     assert band.low == pytest.approx(4.9) and band.high == pytest.approx(5.1)
+
+
+def fake_calibration_run(monkeypatch, rows: list[dict]):
+    """讓校準期的模擬直接回傳指定的每日紀錄。"""
+    monkeypatch.setattr(SimulationEngine, "run", lambda self, ticks=None: rows)
+
+
+def test_calibration_ignores_burn_in_and_days_without_trade(small_config, monkeypatch):
+    eq = small_config.equilibrium
+    burn_in = [{"price": 100.0, "traded": True, "price_capped": False}] * eq.burn_in_days
+    stable = [
+        {"price": 5.0, "traded": True, "price_capped": False} if i % 2 == 0
+        else {"price": 50.0, "traded": False, "price_capped": False}  # 沒成交：價格不算數
+        for i in range(eq.calibration_days - eq.burn_in_days)
+    ]
+    fake_calibration_run(monkeypatch, burn_in + stable)
+
+    band, prices = calibrate(small_config)
+
+    assert band.mean == pytest.approx(5.0)
+    assert band.samples == len(stable) // 2
+    assert len(prices) == eq.calibration_days  # 回傳的仍是完整校準期的每日價格
+
+
+def test_calibration_fails_with_too_few_traded_days(small_config, monkeypatch):
+    eq = small_config.equilibrium
+    rows = [{"price": 5.0, "traded": False, "price_capped": False}] * eq.calibration_days
+    rows[-1] = {"price": 5.0, "traded": True, "price_capped": False}
+    fake_calibration_run(monkeypatch, rows)
+
+    with pytest.raises(ValueError, match="有效成交資料不足"):
+        calibrate(small_config)
 
 
 def test_reset_restores_initial_world_but_keeps_tick(small_config):

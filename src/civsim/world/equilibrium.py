@@ -3,7 +3,8 @@
 均衡價格是一個區間（11/9 會議）：用穩定期每日成交價的平均 ± k 個標準差。
 
 穩定期的價格要用「校準期」來算：同一個 seed、同一批平民，但沒有政府、沒有天災，從初始狀態跑
-calibration_days 天，去掉前 burn_in_days 天，剩下每日成交價的平均與標準差就是基準。
+calibration_days 天，去掉前 burn_in_days 天，剩下的日子只取有實際成交的（沒成交那天的價格不是真的成交價），
+這些成交價的平均與標準差就是基準。有效成交日少於 2 天時報錯。
 這樣不論政府平時做了什麼，A／B／C 組同一個 seed 的均衡區間都相同，結果才能比較。
 
 為什麼價格會有均衡點（推導見 docs/society.md）：平民報價的參考價是
@@ -61,7 +62,7 @@ def calibration_config(config: SimConfig) -> SimConfig:
 
 def calibrate(config: SimConfig) -> tuple[EquilibriumBand, list[float]]:
     """回傳均衡區間，以及校準期每日記錄的價格。"""
-    from civsim.world.engine import SimulationEngine
+    from civsim.world.engine import SimulationEngine  # 延後匯入，避免循環
 
     eq = config.equilibrium
 

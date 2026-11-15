@@ -34,7 +34,7 @@ class CitizenConfig:
 @dataclass
 class MarketConfig:
     base_price: float = 5.0  # 糧食的基準價值（習慣價格，貨幣量倍率之前）
-    anchor_weight: float = 0.5  # 報價時習慣價格的權重，其餘參考昨天的成交價（越小價格越黏）
+    anchor_weight: float = 0.2  # 報價時習慣價格的權重，其餘參考昨天的成交價（越小價格越黏；0.5 時市場會自己恢復，見 docs/society.md）
     urgency_premium: float = 1.0  # 存糧見底時，買價最多比參考價高多少（1.0 = +100%）
     surplus_discount: float = 0.3  # 存貨越多，賣價最多比參考價低多少
     greed_markup: float = 0.2  # 最貪心的賣家，賣價比參考價高多少
@@ -69,7 +69,7 @@ class DisasterConfig:
     count: int = 5
     stable_days: int = 20  # 穩定期的平均天數
     stable_jitter: int = 5  # 每次穩定期在 stable_days ± jitter 天內隨機，政府才學不到天災的固定時間
-    disaster_days: int = 5
+    disaster_days: int = 8
     evaluation_days: int = 15
     kind: str = "drought"
     food_multiplier: float = 0.2  # 天災期間的收成倍率
