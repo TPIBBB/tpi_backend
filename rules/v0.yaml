@@ -1,0 +1,14 @@
+# 社會規則 v0：只放 README 的兩個例子。之後依 B 組的觀察新增規則，改版時換新檔名（v1.yaml…）。
+#
+# 兩種 don't：
+#   行為種類：forbids 列出的決策只要做了就算違規
+#   行為程度：action + param + max/min，參數超過門檻才算違規
+# do 規則只顯示給政府看，引擎不檢查。
+version: v0
+rules:
+  - id: no_execution
+    text: 不能亂殺平民
+    forbids: [execute_citizen]
+  - id: no_currency
+    text: 不能發行貨幣
+    forbids: [issue_currency]

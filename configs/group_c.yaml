@@ -1,0 +1,36 @@
+# C 組：LLM 政府、有記憶、有社會規則（試跑：2 次天災）
+# 和 group_a.yaml 只差 name 與 government.memory，其他都要相同，A、C 組才能比較。
+name: group_c
+seed: 42
+population: {producer_trader: 10, producer_self: 5, consumer: 20, dependent: 5}
+citizens:
+  wage: 12
+  harvest_min: 5
+  harvest_max: 9
+  noncompliance_rate: 0.3
+market:
+  base_price: 5.0
+  anchor_weight: 0.5
+government:
+  controller: llm    # 用 LLM 政府
+  budget: 1000
+  food_reserve: 100
+  memory: true       # C 組：有記憶，每次評估期結束會反思、更新記憶
+  max_decisions_per_day: 1
+  call_policy: on_change   # 狀況沒變就沿用上次的決策、不呼叫 LLM（約省一半呼叫）；always = 每天呼叫
+disasters:
+  # 試跑：每次 18 天 × 2 次，決策最多 36 次（on_change 約 26 次）+ 2 次反思。
+  # 至少要 2 次天災，第 2 次才用得到第 1 次學到的記憶。正式實驗改回 baseline.yaml 的 5 次、20 ± 5、5、15
+  count: 2
+  stable_days: 5
+  stable_jitter: 0   # 穩定期固定 5 天，不隨機
+  disaster_days: 5   # 和正式實驗相同：價格會漲到均衡價的約 2.2 倍
+  evaluation_days: 8 # 短於正式的 15 天，但還看得出價格能不能穩住
+  food_multiplier: 0.2
+equilibrium:
+  calibration_days: 80
+  burn_in_days: 20
+  k: 2.0
+social_rules:
+  path: rules/v0.yaml
+  mode: enforce      # A、C 組：違規就拒絕
