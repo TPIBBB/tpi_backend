@@ -9,7 +9,7 @@ from civsim.analysis.goals import evaluate_disaster, first_sustained
 from civsim.config import DisasterConfig, SocialRuleConfig
 from civsim.world import SimulationEngine
 from civsim.world.disasters import build_schedule
-from civsim.world.equilibrium import band_from_prices, calibrate
+from civsim.world.equilibrium import band_from_prices, calibrate, counts_in_band, is_market_price
 from civsim.world.government import GovernmentActionType as T
 from civsim.world.government import GovernmentDecision
 
@@ -195,6 +195,44 @@ def test_evaluate_requires_staying_in_band():
     late = evaluate_disaster(d, history([5, 9, 5, 5, 5, 5], no_trade={2}), band)
     assert late["success"] and late["recovered_day"] == 2
     assert first_sustained([{"disaster_id": i, "success": s} for i, s in enumerate([True, False, True, True], 1)]) == 3
+
+
+def test_counts_in_band_rules():
+    band = band_from_prices([4.0, 6.0], k=1)  # 4 ~ 6
+
+    def day(price=5.0, traded=True, capped=False):
+        return {"price": price, "traded": traded, "price_capped": capped}
+
+    assert is_market_price(day()) and counts_in_band(band, day())
+    assert not counts_in_band(band, day(price=9.0))  # 區間外
+    assert not is_market_price(day(traded=False)) and not counts_in_band(band, day(traded=False))
+    assert not is_market_price(day(capped=True)) and not counts_in_band(band, day(capped=True))
+    assert not counts_in_band(band, day(traded=False, capped=True))
+
+
+def test_daily_in_band_matches_disaster_report(small_config, monkeypatch):
+    """每日指標的 in_band 和天災報告用同一個判斷：沒成交的日子兩邊都不算在區間內。"""
+    import civsim.world.engine as engine_module
+
+    wide = band_from_prices([0.0, 1000.0], k=1)  # 寬到每天的價格都在區間內
+    d = build_schedule(small_config.disasters)[0]
+    no_trade_tick = d.end_tick + 2  # 第一次天災評估期的第 2 天
+    real_settle = engine_module.settle_market
+
+    def settle(world, rng):
+        clearing, events = real_settle(world, rng)
+        if world.tick == no_trade_tick:
+            clearing = replace(clearing, traded=False)
+        return clearing, events
+
+    monkeypatch.setattr(engine_module, "settle_market", settle)
+    engine = SimulationEngine(small_config, government=None, band=wide)
+    history = engine.run()
+
+    assert all(m["in_band"] == counts_in_band(wide, m) for m in history)
+    assert [m["tick"] for m in history if not m["in_band"]] == [no_trade_tick]
+    first = engine.reports[0]
+    assert not first["success"] and first["left_band_after_recovery"] and first["no_trade_days"] == 1
 
 
 def test_government_gets_one_decision_per_day(small_config):

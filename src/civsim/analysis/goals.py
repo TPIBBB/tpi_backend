@@ -7,11 +7,16 @@
 - 沒有實際成交的那幾天，也不算在區間內：那天記錄的價格是沿用前一天、或依買賣報價推出來的，
   不是市場真的成交價；市場沒有成交，代表還沒恢復正常運作
 - 死亡與挨餓人數不影響判定，只記成輔助指標
+
+「這天算不算在區間內」的判斷在 world/equilibrium.py 的 counts_in_band，每日指標的 in_band 也用它。
+
+報告的 capped_days、no_trade_days 會重複計算「沒成交又被上限壓住」的日子（兩個都算 1 天），
+兩者相加不等於不算在區間內的天數。要算這個天數，請用每日指標的 in_band。
 """
 
 from __future__ import annotations
 
-from civsim.world.equilibrium import EquilibriumBand
+from civsim.world.equilibrium import EquilibriumBand, counts_in_band
 
 
 def evaluate_disaster(disaster, history: list[dict], band: EquilibriumBand,
@@ -21,7 +26,7 @@ def evaluate_disaster(disaster, history: list[dict], band: EquilibriumBand,
     history 是這個天災週期每天的指標（analysis/metrics.py）；decisions 是這個週期政府的所有決策結果。
     """
     window = [m for m in history if disaster.end_tick < m["tick"] <= disaster.window_end]
-    in_band = [band.contains(m["price"]) and m["traded"] and not m["price_capped"] for m in window]
+    in_band = [counts_in_band(band, m) for m in window]
 
     entered = next((i for i, ok in enumerate(in_band) if ok), None)
     success = entered is not None and all(in_band[entered:])
