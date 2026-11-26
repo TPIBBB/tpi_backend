@@ -67,11 +67,13 @@ class ClientCredentials:
 
 
 class HttpWorldClient:
-    def __init__(self, base_url: str | None = None, run_id: str | None = None, *,
+    def __init__(self, base_url: str | None = None, *, run_id: str | None = None,
                  credentials: ClientCredentials | None = None,
                  http=None, max_retries: int = 3, backoff: float = 1.0, timeout: float = 30,
                  sleep: Callable[[float], None] = time.sleep):
-        """http：測試時可以傳入現成的 httpx.Client（例如 FastAPI 的 TestClient）。
+        """除了 base_url，其他參數都只能用名字指定（例如 run_id=...），避免參數順序改變時被悄悄傳錯。
+
+        http：測試時可以傳入現成的 httpx.Client（例如 FastAPI 的 TestClient）。
         max_retries：失敗後最多再試幾次；第 n 次重試前等 backoff × 2^(n-1) 秒。
         run_id：不給就用 world-api 目前唯一的 run。
         credentials：digiRunner 的 client 帳密，不給就讀環境變數；直連 world-api 時用不到。

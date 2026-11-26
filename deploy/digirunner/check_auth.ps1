@@ -5,14 +5,23 @@
 param([string]$BaseUrl = "http://localhost:31080")
 
 $envFile = Join-Path $PSScriptRoot "..\..\.env"
-if (-not (Test-Path $envFile)) { Write-Host "找不到 .env：$envFile"; exit 1 }
 
-# 和 civsim 的 load_dotenv 一樣：同一個名稱出現多次時取「第一個」，去掉前後空白與引號
+# 讀設定的順序和 civsim 的 load_dotenv 相同：
+#   1. 終端機裡已經設定的環境變數優先（例如 VS Code 開終端機時自動讀入的 .env，或自己用 $env: 設的）
+#   2. 沒有的話才讀 .env：同一個名稱出現多次時取「第一個」，去掉前後空白，再去掉兩端的 " 和 '
 function EnvGet($name) {
-    $line = Get-Content $envFile | Where-Object { $_ -match "^\s*$name\s*=" } | Select-Object -First 1
-    $value = if ($line) { $line.Split('=', 2)[1].Trim().Trim('"').Trim("'") } else { "" }
+    $value = [Environment]::GetEnvironmentVariable($name)
+    $from = "環境變數"
+    if ($null -eq $value) {
+        $from = ".env"
+        $line = if (Test-Path $envFile) {
+            Get-Content $envFile | Where-Object { $_ -match "^\s*$name\s*=" } | Select-Object -First 1
+        }
+        $value = if ($line) { $line.Split('=', 2)[1].Trim().Trim('"').Trim("'") } else { "" }
+    }
+    $value = $value.Trim()
     if (-not $value) {
-        Write-Host ".env 裡沒有 $name，或第一個 $name= 是空的（.env 裡同名的設定只會讀第一個）"
+        Write-Host "找不到 $name，或它是空的（目前讀的是$from；.env 裡同名的設定只會讀第一個）"
         exit 1
     }
     $value
@@ -64,16 +73,19 @@ $fe = Get-Token (EnvGet "DIGIRUNNER_FRONTEND_CLIENT_ID") (EnvGet "DIGIRUNNER_FRO
 
 # 先確認 world-api 上有一個還在等決策的 run，否則政府路徑的權限測不到
 try {
-    $runs = @(Invoke-RestMethod "$BaseUrl/runs" -Headers @{ Authorization = "Bearer $gov" } -TimeoutSec 10)
+    # 先存進變數再取第一個：Windows PowerShell 5.1 的 Invoke-RestMethod 會把整個 JSON 陣列當成一個東西輸出，
+    # 直接用 @(Invoke-RestMethod ...) 包起來，有 2 個以上 run 時 [0] 會拿到整個陣列
+    $runs = Invoke-RestMethod "$BaseUrl/runs" -Headers @{ Authorization = "Bearer $gov" } -TimeoutSec 10
 } catch {
     $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { "沒有回應" }
     Write-Host "政府 client 讀不到 /runs（$code）：world-api 有開嗎？gov-group 有包含 /runs 嗎？"
     exit 1
 }
-if ($runs.Count -eq 0 -or -not $runs[0].run_id) { Write-Host "world-api 上沒有 run，請先用 civsim serve 建立"; exit 1 }
-$rid = $runs[0].run_id
-if ($runs[0].status -ne "awaiting_decision") {
-    Write-Host "run $rid 的狀態是 $($runs[0].status)，政府的路徑測不到。請重開 civsim serve，拿一個新的 run 再檢查"
+$run = @($runs)[0]
+if (-not $run -or -not $run.run_id) { Write-Host "world-api 上沒有 run，請先用 civsim serve 建立"; exit 1 }
+$rid = $run.run_id
+if ($run.status -ne "awaiting_decision") {
+    Write-Host "run $rid 的狀態是 $($run.status)，政府的路徑測不到。請重開 civsim serve，拿一個新的 run 再檢查"
     exit 1
 }
 "兩個 client 都換到 token 了，目前的 run_id：$rid"
@@ -83,13 +95,14 @@ Test-Call "2. 政府呼叫政府的路徑" "$BaseUrl/runs/$rid/government/observ
 Test-Call "3. 政府呼叫 /world/disasters" "$BaseUrl/world/disasters" $gov "擋下"
 Test-Call "4. 前端呼叫 /world/disasters" "$BaseUrl/world/disasters" $fe "放行"
 Test-Call "5. 前端呼叫政府的路徑" "$BaseUrl/runs/$rid/government/observation" $fe "擋下"
+Test-Call "6. 前端呼叫 /runs" "$BaseUrl/runs" $fe "放行"
 
-# 6. 政府 client 不能被限流（TPS/Node 要設 0）：連續送 30 次，不能出現 429
+# 7. 政府 client 不能被限流（TPS/Node 要設 0）：連續送 30 次，不能出現 429
 $codes = 1..30 | ForEach-Object { Get-Status "$BaseUrl/runs" $gov }
 $limited = @($codes | Where-Object { $_ -eq 429 }).Count
 $other = @($codes | Where-Object { $_ -lt 200 -or $_ -ge 300 }).Count
-if ($other -eq 0) { "OK   6. 政府連續呼叫 30 次             都放行，沒有被限流" }
-else { "NG!  6. 政府連續呼叫 30 次             有 $other 次沒有放行（其中 429 被限流 $limited 次）：TPS/Node 要設 0"; $script:failed++ }
+if ($other -eq 0) { "OK   7. 政府連續呼叫 30 次             都放行，沒有被限流" }
+else { "NG!  7. 政府連續呼叫 30 次             有 $other 次沒有放行（其中 429 被限流 $limited 次）：TPS/Node 要設 0"; $script:failed++ }
 
 ""
 if ($script:failed) { "有 $($script:failed) 項和預期不同，對照 docs/digirunner_setup.md 的「常見問題」"; exit 1 }
