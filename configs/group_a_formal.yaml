@@ -1,4 +1,4 @@
-# A 組：LLM 政府、沒有記憶、有社會規則，（正式實驗 5 次天災）
+# A 組：LLM 政府、沒有記憶、有社會規則（正式實驗 5 次天災）
 name: group_a
 seed: 45
 population: {producer_trader: 10, producer_self: 5, consumer: 20, dependent: 5}
