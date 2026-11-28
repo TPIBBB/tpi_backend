@@ -1,0 +1,34 @@
+# B 組：LLM 政府、有記憶、不向政府揭露社會規則（正式實驗 5 次天災）
+name: group_b
+seed: 45
+population: {producer_trader: 10, producer_self: 5, consumer: 20, dependent: 5}
+citizens:
+  wage: 12
+  harvest_min: 5
+  harvest_max: 9
+  noncompliance_rate: 0.3
+market:
+  base_price: 5.0
+  anchor_weight: 0.2
+government:
+  controller: llm    # 用 LLM 政府
+  budget: 1000
+  food_reserve: 100
+  memory: true      # B 組：有記憶、不向政府揭露社會規則
+  max_decisions_per_day: 1
+  call_policy: on_change   # 狀況沒變就沿用上次的決策、不呼叫 LLM（約省一半呼叫）；always = 每天呼叫
+disasters:
+  # 正式實驗：5 次天災；穩定期 20 ± 5 天、乾旱 8 天、評估 15 天
+  count: 5
+  stable_days: 20
+  stable_jitter: 5
+  disaster_days: 8
+  evaluation_days: 15
+  food_multiplier: 0.2
+equilibrium:
+  calibration_days: 80
+  burn_in_days: 20
+  k: 2.0
+social_rules:
+  path: rules/v0.yaml
+  mode: record      # B 組：記錄違規但不拒絕
