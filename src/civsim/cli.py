@@ -98,6 +98,23 @@ def cmd_govern(args) -> None:
         print(f"經過 digiRunner：以 client {client.client_id} 申請 token {summary['token_requests']} 次")
 
 
+def cmd_export_access_log(args) -> None:
+    from collections import Counter
+
+    from civsim.gateway.access_log import AccessLogError, export
+
+    try:
+        path, rows = export(args.run_id, Path(args.out), container=args.container)
+    except AccessLogError as e:
+        print(f"匯出失敗：{e}")
+        raise SystemExit(1) from None
+    print(f"run {args.run_id}：{len(rows)} 次經過 digiRunner 的呼叫（{rows[0]['time']} ~ {rows[-1]['time']}）")
+    counts = Counter((r["client_id"] or "（被擋下）", r["http_status"], r["error"]) for r in rows)
+    for (client, status, error), n in sorted(counts.items(), key=lambda kv: str(kv[0])):
+        print(f"  {status}  {n:>4} 次  {client}" + (f"：{error}" if error else ""))
+    print(f"已寫入 {path}")
+
+
 def cmd_llm_check(args) -> None:
     """用一個假的天災情境呼叫一次 LLM 政府，確認 API key 與模型設定可以用。"""
     from civsim.agents.government import build_prompt, make_government
@@ -175,6 +192,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--quiet", action="store_true", help="不印每天的結果")
     p.add_argument("--strict", action="store_true", help="LLM 設定（模型、temperature、seed）沒鎖定就不執行，正式實驗用")
     p.set_defaults(func=cmd_govern)
+
+    p = sub.add_parser("export-access-log", help="從 digiRunner 匯出某個 run 的存取紀錄（每次呼叫的時間、client、路徑、狀態碼）")
+    p.add_argument("run_id", help="civsim serve 啟動時印出的 run_id，例如 20261129-a572")
+    p.add_argument("--out", required=True, help="這個 run 的紀錄資料夾，會寫入裡面的 digirunner_access.jsonl")
+    p.add_argument("--container", help="digiRunner 的容器名稱；不給就自動找正在跑的那一個")
+    p.set_defaults(func=cmd_export_access_log)
 
     args = parser.parse_args(argv)
     args.func(args)

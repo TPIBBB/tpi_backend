@@ -2,6 +2,7 @@
 
 照這份文件做完，政府 client 會經過 digiRunner（API Gateway）呼叫 world-api，而且 digiRunner 會檢查身分：
 政府只能用政府的路徑，**讀不到天災時間表**；前端只能讀 `/world/*`。
+digiRunner 也會記下每一次呼叫，實驗跑完可以匯出成這個 run 的存取紀錄（見「匯出存取紀錄」）。
 
 ```
 政府 client ──（用帳密換 token）──→ digiRunner :31080 ──→ world-api :8000 ──→ 模擬引擎
@@ -190,6 +191,10 @@ echo "$pw"
 
 按「**更新**」。「安全等級」維持 System Security，其他分頁不用動。
 
+**打開存取紀錄**（整個 digiRunner 只要做一次）：「系統設定」→「Setting」→ 搜尋 `TSMP_APILOG_FORCE_WRITE_RDB`
+→ 改成 **`true`** → 更新，不用重開 digiRunner。沒打開的話，digiRunner 不會保存任何呼叫紀錄，
+跑完實驗也就沒辦法匯出（見「匯出存取紀錄」）。**打開之前的呼叫找不回來。**
+
 ## 6. 驗證
 
 **檢查身分、權限與限流**（在專案資料夾，world-api 要**剛啟動**，run 還沒跑完）：
@@ -234,6 +239,46 @@ python -m civsim govern --base-url http://localhost:31080
 
 天數和天災次數依 `configs/baseline.yaml` 而定。
 
+## 匯出存取紀錄
+
+digiRunner 會記下每一次經過它的呼叫（要先做第 5 步的「打開存取紀錄」）。實驗跑完後，把這個 run 的紀錄匯出：
+
+```powershell
+python -m civsim export-access-log <run_id> --out runs/api/<run_id>
+```
+
+`run_id` 是 `civsim serve` 啟動時印出的那個；`--out` 是這個 run 的紀錄資料夾，會寫入裡面的 `digirunner_access.jsonl`。
+（`civsim serve` 目前還不會自己存世界的紀錄，這部分還在做，先自己指定一個資料夾。）輸出範例：
+
+```
+run 20261129-a572：2 次經過 digiRunner 的呼叫（2026-11-29 01:41:02 ~ 2026-11-29 01:41:02）
+  200     1 次  civsim-gov
+  403     1 次  （被擋下）：Token Violates Scope Authorization Access Settings
+已寫入 runs\api\20261129-a572\digirunner_access.jsonl
+```
+
+`digirunner_access.jsonl` 一行是一次呼叫：
+
+| 欄位 | 意思 |
+|---|---|
+| `time` | digiRunner 收到請求的時間（台灣時間，只到秒） |
+| `client_id` | 哪個 client 呼叫的；被 digiRunner 擋下的呼叫是 `null`（digiRunner 不記） |
+| `api` | 註冊在 digiRunner 的路徑，例如 `/runs/{p}/government/observation` |
+| `url` | 實際呼叫的網址，裡面有 run_id |
+| `http_status` | 狀態碼 |
+| `success` | digiRunner 判斷這次有沒有成功 |
+| `elapsed_ms` | 花了多久（毫秒） |
+| `error` | 被擋下或失敗的原因 |
+| `log_id` | digiRunner 裡這筆紀錄的 ID |
+
+- 只收網址裡有 `/runs/<run_id>/` 的呼叫，也就是政府的路徑。`GET /runs` 和換 token 的網址裡沒有 run_id，分不出是哪個 run，不收
+- 紀錄只存在自己電腦 Docker 裡的 digiRunner，`docker compose down -v` 會清掉，所以**每次實驗跑完就匯出**
+- 可以重複匯出，會用最新的結果覆蓋；但這次查到的筆數比檔案裡少時（digiRunner 的紀錄被刪過）不會覆蓋
+- 怎麼讀到的：digiRunner 容器裡有它自己的資料庫服務（只有容器內部連得到），指令用 `docker exec` 在容器裡查詢，只讀不寫。
+  digiRunner 會定時把紀錄從暫存表（`TSMP_REQ_LOG`、`TSMP_RES_LOG`）複製到歷史表（`TSMP_REQ_RES_LOG_HISTORY`），兩邊都會查
+- 想**即時**看每次呼叫（除錯用）：「系統設定」→「Setting」把 `TSMP_ONLINE_CONSOLE` 改成 `true`，再到「系統設定」→「Online Console」，
+  等級選 **DEBUG** 才看得到轉送的呼叫（`Src Url:` 開頭的行）。這頁只即時顯示、不會保存，也看不到是哪個 client，看完記得切回 INFO
+
 ## 政府 client 怎麼換 token
 
 給要改 `src/civsim/gateway/client.py` 的人：
@@ -276,6 +321,8 @@ python -m civsim govern --base-url http://localhost:31080
 | 忘記 client 密碼 | 打開 `.env` 看；或到「安全性 → 密碼管理」設新的，再改 `.env` |
 | VS Code 裡按 Ctrl+C 停不掉 world-api | 按終端機的垃圾桶圖示，或 `Stop-Process -Id (Get-NetTCPConnection -LocalPort 8000 -State Listen).OwningProcess` |
 | 自己寫的 `.ps1` 中文變亂碼、怪錯誤 | Windows PowerShell 5.1 要用**帶 BOM 的 UTF-8** 存檔 |
+| 匯出說「沒有 run … 的紀錄」 | run_id 打錯；`civsim govern` 沒加 `--base-url http://localhost:31080`（沒經過 digiRunner）；或跑的時候還沒打開存取紀錄（第 5 步） |
+| 匯出說「找不到正在跑的 digiRunner」 | Docker Desktop 沒開，或 digiRunner 沒啟動（`docker compose up -d dgr`） |
 
 ## world-api 新增或修改路徑時
 

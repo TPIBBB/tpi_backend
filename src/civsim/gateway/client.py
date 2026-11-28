@@ -92,7 +92,8 @@ class HttpWorldClient:
         self.token_requests = 0  # 向 digiRunner 申請 token 的次數
 
         self.run_id = run_id or self._only_run()
-        self.http.headers["X-Run-Id"] = self.run_id  # 讓 digiRunner 的存取紀錄能對應到模擬紀錄
+        # docs/api.md 的約定。digiRunner 的存取紀錄不存 header，對應 run 靠的是政府路徑網址裡的 run_id
+        self.http.headers["X-Run-Id"] = self.run_id
 
     @property
     def client_id(self) -> str:

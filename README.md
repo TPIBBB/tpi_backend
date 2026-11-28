@@ -331,7 +331,8 @@ civsim govern
 
 `civsim govern --base-url <網址>` 可以改連 digiRunner；`--controller llm` 改用 LLM 政府（等 Agent 串接供應商後可用）。
 PostgreSQL 與 digiRunner 用 `docker compose up` 啟動。讓政府經過 digiRunner 呼叫（身分驗證、權限）的設定方式見
-[docs/digirunner_setup.md](docs/digirunner_setup.md)。
+[docs/digirunner_setup.md](docs/digirunner_setup.md)。經過 digiRunner 跑完後，`civsim export-access-log <run_id> --out <資料夾>`
+可以匯出這個 run 的存取紀錄。
 
 # 專案結構
 

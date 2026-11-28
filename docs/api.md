@@ -55,7 +55,8 @@ architecture.md 的那一段要同步改成指向本文件。
 - base URL：
   - 直連（開發用）：`http://localhost:8000`
   - 經過 digiRunner：依 digiRunner 的設定，政府 client 用環境變數 `DIGIRUNNER_BASE_URL` 切換，程式不用改
-- 每個請求都建議帶 header `X-Run-Id: <run_id>`，讓 digiRunner 的存取紀錄能和模擬紀錄對應。
+- 每個請求都建議帶 header `X-Run-Id: <run_id>`。digiRunner 的存取紀錄不存 header，存取紀錄是靠政府路徑網址裡的
+  run_id 對應到 run（匯出方式見 [digirunner_setup.md](digirunner_setup.md) 的「匯出存取紀錄」）。
 
 ## 狀態（D2）
 

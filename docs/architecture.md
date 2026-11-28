@@ -206,7 +206,9 @@ world-api (api/server.py + api/government.py) ── 模擬引擎；平民在這
 - 每個 run 一份 manifest：`run_id`、條件名稱、seed、config 雜湊值、規則集版本、初始記憶版本、
   模型 ID 與 temperature、git commit。
 - 天災報告、記憶版本、LLM 呼叫（prompt、回應、模型版本）都帶 `run_id`。
-- 政府 client 的請求在 header 帶 `run_id`，讓 digiRunner 的存取紀錄能和模擬紀錄對應。
+- digiRunner 的存取紀錄（每次呼叫的時間、client、網址、狀態碼）靠政府路徑網址裡的 `run_id` 對應到 run，
+  跑完用 `python -m civsim export-access-log` 匯出成該 run 的 `digirunner_access.jsonl`。
+  政府 client 另外在 header 帶 `X-Run-Id`，但 digiRunner 的紀錄不存 header。
 - 先寫 JSONL（`JsonlRecorder`），資料庫組另寫匯入 `db/schema.sql` 的流程；實驗執行不依賴資料庫服務。
 - 目前每個 run 的 `meta.json` 有：完整的 config、git commit 與有沒有未 commit 的修改（`git.dirty`），
   用 LLM 政府時再加上 `llm`：供應商、模型、temperature、seed、prompt 版本，以及還沒鎖定的設定（`unlocked`）。
