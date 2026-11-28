@@ -5,15 +5,28 @@
 set -u
 BASE_URL="${1:-http://localhost:31080}"
 ENV_FILE="$(cd "$(dirname "$0")/../.." && pwd)/.env"
-[ -f "$ENV_FILE" ] || { echo "找不到 .env：$ENV_FILE"; exit 1; }
 
-# 和 civsim 的 load_dotenv 一樣：同一個名稱出現多次時取「第一個」，去掉前後空白與引號
+trim() { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+
+# 讀設定的順序和 civsim 的 load_dotenv 相同：
+#   1. 終端機裡已經設定的環境變數優先
+#   2. 沒有的話才讀 .env：同一個名稱出現多次時取「第一個」，去掉前後空白，再去掉兩端的 " 和 '
+#      （和 Python 的 strip('"').strip("'") 一樣，單邊的引號也會去掉）
 env_get() {
-  local v
-  v=$(grep -m1 -E "^[[:space:]]*$1[[:space:]]*=" "$ENV_FILE" | cut -d= -f2- | tr -d '\r' |
-      sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")
+  local v from
+  if v=$(printenv "$1"); then
+    from="環境變數"
+  else
+    from=".env"
+    v=""
+    if [ -f "$ENV_FILE" ]; then
+      v=$(grep -m1 -E "^[[:space:]]*$1[[:space:]]*=" "$ENV_FILE" | cut -d= -f2- | tr -d '\r' | trim |
+          sed -e 's/^"*//' -e 's/"*$//' -e "s/^'*//" -e "s/'*\$//")
+    fi
+  fi
+  v=$(printf '%s' "$v" | trim)
   if [ -z "$v" ]; then
-    echo ".env 裡沒有 $1，或第一個 $1= 是空的（.env 裡同名的設定只會讀第一個）" >&2
+    echo "找不到 $1，或它是空的（目前讀的是$from；.env 裡同名的設定只會讀第一個）" >&2
     return 1
   fi
   printf '%s' "$v"
@@ -91,8 +104,9 @@ test_call "2. 政府呼叫政府的路徑" "$BASE_URL/runs/$RID/government/obser
 test_call "3. 政府呼叫 /world/disasters" "$BASE_URL/world/disasters" "$GOV" "擋下"
 test_call "4. 前端呼叫 /world/disasters" "$BASE_URL/world/disasters" "$FE" "放行"
 test_call "5. 前端呼叫政府的路徑" "$BASE_URL/runs/$RID/government/observation" "$FE" "擋下"
+test_call "6. 前端呼叫 /runs" "$BASE_URL/runs" "$FE" "放行"
 
-# 6. 政府 client 不能被限流（TPS/Node 要設 0）：連續送 30 次，不能出現 429
+# 7. 政府 client 不能被限流（TPS/Node 要設 0）：連續送 30 次，不能出現 429
 other=0
 limited=0
 for _ in $(seq 1 30); do
@@ -101,9 +115,9 @@ for _ in $(seq 1 30); do
   [ "$c" = "429" ] && limited=$((limited + 1))
 done
 if [ "$other" -eq 0 ]; then
-  echo "OK   6. 政府連續呼叫 30 次：都放行，沒有被限流"
+  echo "OK   7. 政府連續呼叫 30 次：都放行，沒有被限流"
 else
-  echo "NG!  6. 政府連續呼叫 30 次：有 $other 次沒有放行（其中 429 被限流 $limited 次），TPS/Node 要設 0"
+  echo "NG!  7. 政府連續呼叫 30 次：有 $other 次沒有放行（其中 429 被限流 $limited 次），TPS/Node 要設 0"
   failed=$((failed + 1))
 fi
 

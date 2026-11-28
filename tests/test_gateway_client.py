@@ -210,3 +210,10 @@ def test_invalid_run_stops_instead_of_idling(server, engine):
     with pytest.raises(RunInvalid):
         run_government(client(http, run_id=RUN, max_retries=1), NoGovernment())
     assert 0 < engine.world.tick < engine.config.total_ticks
+
+
+def test_run_id_must_be_given_by_name(server):
+    """run_id 只能用名字指定：舊的寫法 HttpWorldClient(網址, token, run_id) 要直接報錯，不能被悄悄當成 run_id。"""
+    with pytest.raises(TypeError):
+        HttpWorldClient("http://localhost:8000", RUN)
+    assert HttpWorldClient(http=server, run_id=RUN, backoff=0).run_id == RUN
